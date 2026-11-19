@@ -8,6 +8,8 @@ import { scheduler } from "./agent/scheduler.ts";
 import { CONFIG, ensureDirs } from "./config.ts";
 import { httpGuard } from "./http-guard.ts";
 import { mcpRouter } from "./mcp-http.ts";
+import { enginesRouter, registerEngines } from "./engines/index.ts";
+import { agyHookRouter } from "./engines/antigravity/hooks.ts";
 import { attachRealtime } from "./realtime.ts";
 import { closeOrphanRequests } from "./recover.ts";
 import { approvalsRouter } from "./routes/approvals.ts";
@@ -24,6 +26,7 @@ import { ensureDefaultProject, listProjects, loadProjects } from "./projects.ts"
 import { migrateProjects } from "../scripts/migrate-projects.ts";
 
 ensureDirs();
+registerEngines();
 // Urutan penting: migrasi membaca tugas lama, lalu project dimuat, lalu tugas yatim diadopsi.
 loadTasks();
 const migration = migrateProjects();
@@ -42,7 +45,7 @@ app.use("/api", httpGuard);
 app.use(express.json({ limit: "20mb" }));
 app.use("/api", tasksRouter, askRouter, projectsRouter, approvalsRouter, memoryRouter, settingsRouter, workspaceRouter, healthRouter);
 // Jalur internal untuk mesin Antigravity: server MCP lewat HTTP dan hook PreToolUse `agy`.
-app.use("/api", mcpRouter);
+app.use("/api", enginesRouter, mcpRouter, agyHookRouter);
 
 // Aplikasi demo kecil sebagai target uji QA (sengaja punya cacat untuk ditemukan).
 // Berkasnya ada di dalam workspace supaya Engineer bisa memperbaikinya seperti kode proyek biasa.

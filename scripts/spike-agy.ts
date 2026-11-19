@@ -15,7 +15,7 @@
  *   SPIKE_PPS      "1" = --process-per-session (wajib untuk MCP HTTP)
  *   SPIKE_FS       "1" = umumkan kapabilitas fs klien (baca/tulis berkas lewat klien)
  *   SPIKE_FS_DENY  "1" = tolak setiap fs/write_text_file
- *   SPIKE_MODEL, SPIKE_MODE, SPIKE_CANCEL_MS, SPIKE_PROMPT2
+ *   SPIKE_MODEL, SPIKE_MODE, SPIKE_CANCEL_MS, SPIKE_PROMPT2, SPIKE_TIMEOUT_MS
  */
 import { spawn } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
@@ -56,6 +56,17 @@ if (process.env.SPIKE_MCP === "1") {
           { type: "image", data: RED_PNG, mimeType: "image/png" },
         ],
       }),
+    );
+    mcp.registerTool(
+      "wait_seconds",
+      { description: "Menunggu sejumlah detik lalu mengembalikan teks. Untuk menguji batas waktu tool.", inputSchema: { seconds: z.number() } },
+      async ({ seconds }) => {
+        const started = Date.now();
+        log("mcp-tool", `wait_seconds start ${seconds}`);
+        await new Promise((ok) => setTimeout(ok, seconds * 1000));
+        log("mcp-tool", `wait_seconds end ${Date.now() - started}ms`);
+        return { content: [{ type: "text", text: `selesai menunggu ${seconds} detik` }] };
+      },
     );
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on("close", () => {
@@ -143,7 +154,7 @@ const timer = setTimeout(() => {
   console.log("TIMEOUT");
   child.kill("SIGKILL");
   process.exit(1);
-}, 5 * 60_000);
+}, Number(process.env.SPIKE_TIMEOUT_MS) || 5 * 60_000);
 
 try {
   await app.connectWith(acp.ndJsonStream(output, input), async (ctx) => {

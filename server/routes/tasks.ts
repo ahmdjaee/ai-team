@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { Router } from "express";
 import { curator } from "../agent/curator.ts";
 import { resolveEngine, scheduler } from "../agent/scheduler.ts";
+import { ENGINE_LABEL, engineUsable } from "../engines/index.ts";
 import { BOUNDARY, live } from "../browser/live.ts";
 import { CONFIG } from "../config.ts";
 import { getDeleted } from "../deleted-tasks.ts";
@@ -105,6 +106,11 @@ tasksRouter.post("/tasks", (req, res) => {
     return;
   }
   const { engine, model } = resolveEngine(role, choice.engine, choice.model);
+  const usable = engineUsable(engine);
+  if (!usable.ok) {
+    res.status(400).json({ error: `${ENGINE_LABEL[engine]} belum bisa dipakai: ${usable.reason}` });
+    return;
+  }
 
   const task = createTask({ title, description: description || title, role, projectId: project.id, targetUrl, engine, model });
   scheduler.start(task);
@@ -311,7 +317,13 @@ tasksRouter.post("/tasks/:id/handoff", async (req, res) => {
     res.status(400).json({ error: choice.error });
     return;
   }
-  const task = await scheduler.handoff(req.params.id, role, note, choice);
+  const resolved = resolveEngine(role, choice.engine, choice.model);
+  const usable = engineUsable(resolved.engine);
+  if (!usable.ok) {
+    res.status(400).json({ error: `${ENGINE_LABEL[resolved.engine]} belum bisa dipakai: ${usable.reason}` });
+    return;
+  }
+  const task = await scheduler.handoff(req.params.id, role, note, resolved);
   if (!task) {
     res.status(404).json({ error: "tugas tidak ditemukan" });
     return;

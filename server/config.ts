@@ -79,6 +79,8 @@ export const CONFIG = {
     dir: resolve(str("AGY_DIR", join(dataDir, "antigravity"))),
     /** Batas tunggu hook PreToolUse — termasuk kartu persetujuan yang menunggu owner. */
     hookTimeoutSec: num("AGY_HOOK_TIMEOUT_SEC", 6 * 60 * 60),
+    /** Update agy tanpa prompt kita dianggap satu turn latar yang selesai setelah sepi selama ini. */
+    backgroundQuietMs: num("AGY_BACKGROUND_QUIET_MS", 15_000),
   },
 } as const;
 
