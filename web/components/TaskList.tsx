@@ -103,7 +103,10 @@ export const TaskList = memo(function TaskList({
             </div>
             <p className="mt-1 line-clamp-2 text-sm text-ink">{task.title}</p>
             <p className="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] whitespace-nowrap text-muted">
-              <span>{ROLE_SHORT[task.role]}</span>
+              <span>
+                {ROLE_SHORT[task.role]}
+                {task.assignments.at(-1)?.engine === "antigravity" && <span title="Berjalan di Gemini (Antigravity)"> · Gemini</span>}
+              </span>
               {showProject && nameOf(task.projectId) && <span className="truncate">· {nameOf(task.projectId)}</span>}
               {task.assignments.length > 1 && <span>· {task.assignments.length} penugasan</span>}
               {task.assetCount > 0 && <span>· {task.assetCount} bukti</span>}

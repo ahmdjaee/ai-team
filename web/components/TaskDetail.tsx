@@ -8,6 +8,8 @@ import {
   api,
   type RoleId,
   type AutonomyMode,
+  type EngineId,
+  type Settings,
   type ContextUsage,
   type RoleInfo,
   type TaskDetail as TaskDetailData,
@@ -17,6 +19,7 @@ import { formatTokens } from "../activity.ts";
 import { projectPath, type Tab } from "../routes.tsx";
 import { useTaskThread } from "../useTaskThread.ts";
 import { AskPanel } from "./AskPanel.tsx";
+import { ENGINE_SHORT, EnginePicker, GeminiRiskNote, useEngines } from "./EnginePicker.tsx";
 import { Attachments } from "./Attachments.tsx";
 import { Diff } from "./Diff.tsx";
 import { LiveView, lastBrowserAction } from "./LiveView.tsx";
@@ -45,6 +48,22 @@ function HandoffDialog({
   );
   const [note, setNote] = useState(preset?.note ?? "");
   const [sending, setSending] = useState(false);
+  const { engines } = useEngines();
+  const [settings, setSettings] = useState<Settings>();
+  const [engine, setEngine] = useState<EngineId>("claude");
+  const [model, setModel] = useState<string>();
+  /** Bawaan = setelan bot tujuan; berhenti mengikuti begitu Anda memilih sendiri. */
+  const [touchedEngine, setTouchedEngine] = useState(false);
+
+  useEffect(() => {
+    void api.settings().then(setSettings, () => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (touchedEngine || !settings) return;
+    setEngine(settings.engines[role]);
+    setModel(settings.geminiModels[role]);
+  }, [role, settings, touchedEngine]);
 
   return (
     <div className="fixed inset-0 z-20 grid place-items-center bg-scrim p-4" onClick={onClose}>
@@ -73,6 +92,21 @@ function HandoffDialog({
           placeholder="Catatan operan: apa yang harus dikerjakan bot berikutnya"
           className="mt-3 w-full rounded-lg border border-line bg-page p-2 text-sm text-ink outline-none focus:border-accent"
         />
+        <label className="mt-2 block text-xs text-muted">Mesin bot tujuan</label>
+        <div className="mt-1">
+          <EnginePicker
+            engines={engines}
+            engine={engine}
+            model={model}
+            claudeModel={roles.find((item) => item.id === role)?.model}
+            onChange={(next, nextModel) => {
+              setTouchedEngine(true);
+              setEngine(next);
+              setModel(nextModel);
+            }}
+          />
+        </div>
+        {engine === "antigravity" && <GeminiRiskNote className="mt-1" />}
         <div className="mt-3 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">
             Batal
@@ -82,7 +116,12 @@ function HandoffDialog({
             onClick={async () => {
               setSending(true);
               try {
-                await api.handoff(detail.task.id, { role, note: note.trim() || undefined });
+                await api.handoff(detail.task.id, {
+                  role,
+                  note: note.trim() || undefined,
+                  engine,
+                  model: engine === "antigravity" ? model : undefined,
+                });
                 onDone();
                 onClose();
               } catch (error) {
@@ -97,6 +136,19 @@ function HandoffDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+/** Mesin penugasan yang sedang berjalan; Claude tanpa lencana supaya header tugas lama tidak berubah. */
+function EngineBadge({ engine, model }: { engine?: EngineId; model?: string }) {
+  if (!engine || engine === "claude") return null;
+  return (
+    <span
+      title={`Penugasan ini berjalan di ${ENGINE_SHORT[engine]} (Antigravity CLI)${model ? ` · model ${model}` : " · model bawaan agy"}`}
+      className="rounded bg-tag-blue px-1.5 py-0.5 text-[11px] text-tag-blue-ink"
+    >
+      {ENGINE_SHORT[engine]}
+    </span>
   );
 }
 
@@ -345,6 +397,7 @@ export function TaskDetail({
           {task.costUsd > 0 && <span className="shrink-0 text-xs text-faint">${task.costUsd.toFixed(4)}</span>}
           <ContextMeter usage={liveContext ?? task.assignments.at(-1)?.context} />
           <div className="ml-auto flex shrink-0 items-center gap-2 text-xs">
+            <EngineBadge engine={task.assignments.at(-1)?.engine} model={task.assignments.at(-1)?.model} />
             <select
               value={detail.mode}
               onChange={(e) => void api.setMode(task.id, e.target.value as AutonomyMode).then(onChanged)}

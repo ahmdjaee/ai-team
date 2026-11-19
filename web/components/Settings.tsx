@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { MODE_LABEL, MODE_NOTE, api, type AutonomyMode, type RoleInfo, type Settings as SettingsData } from "../api.ts";
+import type { SettingsPatch } from "../../server/settings.ts";
+import { EnginePicker, GeminiRiskNote, geminiInfo, useEngines } from "./EnginePicker.tsx";
 import { permissionState, requestPermission } from "../notifications.ts";
 
 const MODES: AutonomyMode[] = ["auto", "ask", "readonly"];
@@ -15,12 +17,14 @@ export function Settings({ roles, onSaved }: { roles: RoleInfo[]; onSaved: (sett
   const [settings, setSettings] = useState<SettingsData>();
   const [permission, setPermission] = useState(permissionState());
   const [saving, setSaving] = useState(false);
+  const { engines, checking, refresh } = useEngines();
+  const gemini = geminiInfo(engines);
 
   useEffect(() => {
     void api.settings().then(setSettings);
   }, []);
 
-  const save = async (patch: Partial<SettingsData>) => {
+  const save = async (patch: SettingsPatch) => {
     setSaving(true);
     try {
       const next = await api.saveSettings(patch);
@@ -73,6 +77,55 @@ export function Settings({ roles, onSaved }: { roles: RoleInfo[]; onSaved: (sett
           service &amp; container, data &amp; database, kredensial/firewall/akses, hapus berkas &amp; paket. Perintah
           katastrofik tetap ditolak tanpa bisa disetujui.
         </p>
+      </section>
+
+      <section className="mt-7">
+        <h3 className="text-xs uppercase tracking-wide text-muted">Mesin bawaan tiap bot</h3>
+        <p className="mt-1 text-xs text-faint">
+          Berlaku untuk tugas dan operan baru; bisa diganti per tugas di form Tugas baru dan saat Oper. Panel Tanya dan
+          kurator tetap memakai Claude.
+        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+          {!engines || checking ? (
+            <span className="text-faint">Memeriksa Antigravity CLI…</span>
+          ) : gemini?.available ? (
+            <span className="rounded bg-tag-green px-2 py-0.5 text-[11px] text-tag-green-ink">
+              Antigravity siap{gemini.version ? ` · ${gemini.version}` : ""} · {gemini.models?.length ?? 0} model
+            </span>
+          ) : (
+            <span className="rounded bg-tag-yellow px-2 py-0.5 text-[11px] text-tag-yellow-ink">
+              Gemini belum bisa dipakai: {gemini?.reason ?? "status Antigravity tidak diketahui"}
+            </span>
+          )}
+          <button
+            onClick={refresh}
+            disabled={checking}
+            className="rounded-lg border border-line px-2 py-0.5 text-[11px] text-muted hover:border-line-strong disabled:opacity-40"
+          >
+            Periksa lagi
+          </button>
+        </div>
+        <div className="mt-3 space-y-2">
+          {roles.map((role) => (
+            <div key={role.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-panel px-3 py-2">
+              <span className="w-44 shrink-0 text-sm text-ink">{role.title}</span>
+              <EnginePicker
+                engines={engines}
+                engine={settings.engines[role.id]}
+                model={settings.geminiModels[role.id]}
+                claudeModel={role.model}
+                disabled={saving}
+                onChange={(engine, model) =>
+                  void save({
+                    engines: { ...settings.engines, [role.id]: engine },
+                    ...(engine === "antigravity" ? { geminiModels: { [role.id]: model ?? null } } : {}),
+                  })
+                }
+              />
+            </div>
+          ))}
+        </div>
+        <GeminiRiskNote className="mt-2" />
       </section>
 
       <section className="mt-7">

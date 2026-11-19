@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, type ProjectInfo, type RoleId, type RoleInfo } from "../api.ts";
+import { api, type EngineId, type ProjectInfo, type RoleId, type RoleInfo, type Settings } from "../api.ts";
 import { Combobox } from "./Combobox.tsx";
+import { ENGINE_SHORT, EnginePicker, GeminiRiskNote, useEngines } from "./EnginePicker.tsx";
 
 export function NewTaskDialog({
   roles,
@@ -25,6 +26,22 @@ export function NewTaskDialog({
   const [targetUrl, setTargetUrl] = useState(project?.targetUrl ?? defaultTargetUrl);
   const [touchedTarget, setTouchedTarget] = useState(false);
   const [sending, setSending] = useState(false);
+  const { engines } = useEngines();
+  const [settings, setSettings] = useState<Settings>();
+  const [engine, setEngine] = useState<EngineId>("claude");
+  const [model, setModel] = useState<string>();
+  /** Mesin mengikuti setelan bot yang dipilih, sampai Anda memilih sendiri. */
+  const [touchedEngine, setTouchedEngine] = useState(false);
+
+  useEffect(() => {
+    void api.settings().then(setSettings, () => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (touchedEngine || !settings) return;
+    setEngine(settings.engines[role]);
+    setModel(settings.geminiModels[role]);
+  }, [role, settings, touchedEngine]);
 
   // Ganti project → kolom target ikut berganti, selama Anda belum mengisinya sendiri.
   useEffect(() => {
@@ -43,6 +60,8 @@ export function NewTaskDialog({
         role,
         projectId,
         targetUrl: selected?.usesBrowser ? targetUrl.trim() || undefined : undefined,
+        engine,
+        model: engine === "antigravity" ? model : undefined,
       });
       onCreated(task.id);
       onClose();
@@ -106,10 +125,30 @@ export function NewTaskDialog({
               }`}
             >
               <span className="block text-sm text-ink">{item.title}</span>
-              <span className="block font-mono text-[10px] text-muted">{item.model}</span>
+              <span className="block font-mono text-[10px] text-muted">
+                {settings?.engines[item.id] === "antigravity"
+                  ? `${ENGINE_SHORT.antigravity}${settings.geminiModels[item.id] ? ` · ${settings.geminiModels[item.id]}` : ""}`
+                  : item.model}
+              </span>
             </button>
           ))}
         </div>
+
+        <label className="mt-3 block text-xs text-muted">Mesin</label>
+        <div className="mt-1">
+          <EnginePicker
+            engines={engines}
+            engine={engine}
+            model={model}
+            claudeModel={selected?.model}
+            onChange={(next, nextModel) => {
+              setTouchedEngine(true);
+              setEngine(next);
+              setModel(nextModel);
+            }}
+          />
+        </div>
+        {engine === "antigravity" && <GeminiRiskNote className="mt-1" />}
 
         {selected?.usesBrowser && (
           <>

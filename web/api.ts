@@ -1,5 +1,5 @@
-import type { AttentionEvent, AutonomyMode, ContextUsage, RoleId, StoredEvent, UiEvent, WorkerStatus } from "../server/types.ts";
-import type { Settings } from "../server/settings.ts";
+import type { AttentionEvent, AutonomyMode, ContextUsage, EngineId, RoleId, StoredEvent, UiEvent, WorkerStatus } from "../server/types.ts";
+import type { Settings, SettingsPatch } from "../server/settings.ts";
 import type { Assignment, Review, Task, TaskStatus, TaskSummary } from "../server/tasks.ts";
 import type { Project } from "../server/projects.ts";
 import type { AskMessage } from "../server/agent/ask.ts";
@@ -15,7 +15,18 @@ import type {
   RecapVerdict,
 } from "../server/recap.ts";
 
-export type { AskMessage, Assignment, AttentionEvent, AutonomyMode, ContextUsage, Project, RoleId, Review, Settings, StoredEvent, Task, TaskStatus, TaskSummary, UiEvent, WorkerStatus };
+export type { AskMessage, Assignment, AttentionEvent, AutonomyMode, ContextUsage, EngineId, Project, RoleId, Review, Settings, StoredEvent, Task, TaskStatus, TaskSummary, UiEvent, WorkerStatus };
+
+export type EngineInfo = {
+  id: EngineId;
+  label: string;
+  available: boolean;
+  reason?: string;
+  version?: string;
+  models?: { id: string; name: string }[];
+  defaultModel?: string;
+  checkedAt?: string;
+};
 export type { DeletedRecapEntry, DeletedRef, ProjectRecap, RecapEntry, RecapFinding, RecapSeverity, RecapTone, RecapTotals, RecapVerdict };
 export type { CoverageCell, CoverageState, Finding, FindingSeverity, FindingStatus, UnlinkedFinding } from "../server/findings.ts";
 export type { CuratorStatus } from "../server/agent/curator.ts";
@@ -194,7 +205,16 @@ export const api = {
   clearAsk: (id: string) => request<{ ok: true }>(`/api/tasks/${id}/ask`, { method: "DELETE" }),
   saveTaskNotes: (id: string, text: string) =>
     request<{ text: string }>(`/api/tasks/${id}/notes`, { method: "PUT", body: JSON.stringify({ text }) }),
-  createTask: (body: { title: string; description: string; role: RoleId; projectId: string; targetUrl?: string }) =>
+  engines: (refresh = false) => request<{ engines: EngineInfo[] }>(`/api/engines${refresh ? "?refresh=1" : ""}`),
+  createTask: (body: {
+    title: string;
+    description: string;
+    role: RoleId;
+    projectId: string;
+    targetUrl?: string;
+    engine?: EngineId;
+    model?: string;
+  }) =>
     request<{ task: Task }>("/api/tasks", { method: "POST", body: JSON.stringify(body) }),
   message: (id: string, text: string) =>
     request<{ ok: true }>(`/api/tasks/${id}/message`, { method: "POST", body: JSON.stringify({ text }) }),
@@ -206,7 +226,7 @@ export const api = {
       method: "DELETE",
       body: JSON.stringify({ confirm }),
     }),
-  handoff: (id: string, body: { role: RoleId; note?: string }) =>
+  handoff: (id: string, body: { role: RoleId; note?: string; engine?: EngineId; model?: string }) =>
     request<{ ok: true; task: Task }>(`/api/tasks/${id}/handoff`, { method: "POST", body: JSON.stringify(body) }),
   review: (id: string, body: { status: "approved" | "changes_requested"; comment: string; sendBackToAgent: boolean }) =>
     request<{ ok: true; task: Task }>(`/api/tasks/${id}/review`, { method: "POST", body: JSON.stringify(body) }),
@@ -224,7 +244,7 @@ export const api = {
   setMode: (id: string, mode: AutonomyMode) =>
     request<{ ok: true; task: Task }>(`/api/tasks/${id}/mode`, { method: "POST", body: JSON.stringify({ mode }) }),
   settings: () => request<Settings>("/api/settings"),
-  saveSettings: (patch: Partial<Settings>) =>
+  saveSettings: (patch: SettingsPatch) =>
     request<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
 
   projects: () => request<{ projects: ProjectInfo[] }>("/api/projects"),
