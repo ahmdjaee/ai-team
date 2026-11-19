@@ -54,6 +54,8 @@ export class AcpEventMapper {
     private readonly hooks: {
       /** `ask_question` agy: pertanyaan untuk owner, dijawab di prompt berikutnya. */
       onQuestion?: (toolCallId: string, args: Record<string, unknown>) => void;
+      /** agy tidak menyertakan pesan pada tool yang gagal; alasan penolakan hook diambil dari sini. */
+      failureReason?: (toolCallId: string) => string | undefined;
     } = {},
   ) {}
 
@@ -136,7 +138,9 @@ export class AcpEventMapper {
     if ((update.status === "completed" || update.status === "failed") && !this.finished.has(id)) {
       this.finished.add(id);
       this.running.delete(id);
-      this.emit({ type: "tool_result", toolUseId: id, isError: update.status === "failed", preview: resultPreview(update) });
+      const failed = update.status === "failed";
+      const text = resultPreview(update) || (failed ? (this.hooks.failureReason?.(id) ?? "") : "");
+      this.emit({ type: "tool_result", toolUseId: id, isError: failed, preview: text });
     }
   }
 

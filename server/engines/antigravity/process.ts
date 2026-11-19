@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -114,9 +114,16 @@ export const spawnAgy: Launcher = ({ cwd, env, app }) => {
     });
   });
 
+  // AGY_TRACE=<berkas>: catat JSON-RPC mentah untuk diagnosis (berisi isi percakapan — jangan dinyalakan permanen).
+  const trace = process.env.AGY_TRACE;
+  const log = (direction: string, chunk: Uint8Array) => {
+    if (trace) appendFileSync(trace, `${JSON.stringify({ ts: new Date().toISOString(), pid: child.pid, direction, line: Buffer.from(chunk).toString("utf8") })}\n`);
+  };
+  if (trace) child.stdout?.on("data", (chunk: Buffer) => log("agent->client", chunk));
   const input = Readable.toWeb(child.stdout as Readable) as ReadableStream<Uint8Array>;
   const output = new WritableStream<Uint8Array>({
     write(chunk) {
+      log("client->agent", chunk);
       if (!child.stdin?.destroyed) child.stdin?.write(chunk);
     },
     close() {

@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { CONFIG } from "../../config.ts";
 import { protectedDirs } from "../../protected.ts";
@@ -57,7 +58,9 @@ function within(path: string, dir: string): boolean {
  * yang belum ada dinilai dari folder induk terdekat yang ada.
  */
 export function realPath(path: string, cwd: string): string {
-  let current = isAbsolute(path) ? resolve(path) : resolve(cwd, path);
+  // `~` tidak diperluas agy, tapi pagar tidak boleh bergantung pada itu.
+  const expanded = path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
+  let current = isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded);
   const tail: string[] = [];
   while (!existsSync(current)) {
     const parent = dirname(current);
@@ -116,12 +119,33 @@ function decideWrite(input: DecideInput, path: string): Verdict {
   };
 }
 
-function decideCommand(input: DecideInput, command: string): Verdict {
-  if (!command.trim()) return { decision: "deny", reason: "perintah kosong" };
-  const verdict = input.commandVerdict(command);
+/**
+ * `cd <folder> && …` dengan folder di dalam workspace atau folder tugas tidak mengubah apa pun; Gemini
+ * hampir selalu menulisnya di depan perintah. Bagian itu dibuang sebelum allow-list dicocokkan,
+ * supaya `cd ws && cat x` diperlakukan seperti `cat x`. `cd` ke tempat lain tetap ikut dinilai.
+ */
+function withoutHarmlessCd(input: DecideInput, command: string): string {
+  const areas = [realPath(input.workspaceDir, "/"), realPath(CONFIG.tasksDir, "/")];
+  const parts = splitCommand(command);
+  const kept = parts.filter((part) => {
+    const match = /^cd\s+(?:--\s+)?(['"]?)([^'"\s]+)\1$/.exec(part);
+    if (!match) return true;
+    const target = realPath(match[2] ?? "", input.workspaceDir);
+    return !areas.some((area) => within(target, area));
+  });
+  return kept.length === parts.length ? command : kept.join(" && ");
+}
+
+function decideCommand(input: DecideInput, raw: string): Verdict {
+  const command = withoutHarmlessCd(input, raw);
+  if (!raw.trim()) return { decision: "deny", reason: "perintah kosong" };
+  // Pagar keras menilai perintah utuh, termasuk `cd`-nya.
+  const verdict = input.commandVerdict(raw);
   if (verdict.decision === "deny") return { decision: "deny", reason: verdict.message };
   if (verdict.decision === "ask") return { decision: "ask", reason: verdict.message };
 
+  // Hanya `cd` ke area kerja: tidak ada yang dijalankan.
+  if (!command.trim()) return { decision: "allow" };
   const permissions = permissionsFor(input.role, input.workspaceDir);
   if (matchBashRules(permissions.deny, command, "some")) {
     const part = splitCommand(command).find((piece) => matchBashRules(permissions.deny, piece, "some")) ?? command;

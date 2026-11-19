@@ -201,11 +201,16 @@ function fakeAgent(): { launcher: Launcher; calls: Calls; background: (text: str
           await say("Warna? [1] Merah [2] Biru");
         } else if (verb === "slow") {
           await say("mulai lama");
+          // Seperti agy: perintah yang sedang jalan saat Stop berakhir `failed` tanpa isi.
+          const id = `call_${(sequence += 1)}`;
+          const args = { CommandLine: "sleep 90" };
+          await update(client, params.sessionId, { sessionUpdate: "tool_call", toolCallId: id, name: "run_command", args, rawInput: args, status: "in_progress", kind: "execute", title: "Run sleep" });
           const stopped = await new Promise<boolean>((resolve) => {
             cancel = () => resolve(true);
             setTimeout(() => resolve(false), Number(arg) || 2_000);
           });
           cancel = undefined;
+          await update(client, params.sessionId, { sessionUpdate: "tool_call_update", toolCallId: id, status: stopped ? "failed" : "completed" });
           if (stopped) return { stopReason: "cancelled" };
           await say("selesai lama");
         } else if (verb === "hang") {
@@ -334,6 +339,8 @@ const workspace = CONFIG.workspaceDir;
   check("B5 pagar keras menolak tanpa kartu", h.calls.hooks[1]?.answer?.decision === "deny" && h.of("approval").length === 0, h.calls.hooks[1]);
   check("B6 tool yang ditolak tidak sampai ke izin ACP", h.calls.permissions.length === 1);
   check("B7 alasan penolakan sampai ke agen", (h.calls.hooks[1]?.answer?.reason ?? "").includes("root"), h.calls.hooks[1]);
+  const deniedResult = h.of("tool_result").at(-1);
+  check("B7b alasan penolakan tampil sebagai hasil tool", deniedResult?.isError === true && deniedResult.preview.includes("Ditolak pagar AI Team"), deniedResult);
 
   // Perintah di luar allow-list Engineer → kartu; slot dilepas selama menunggu.
   h.runner.send("shell:curl -s https://example.com");
@@ -444,6 +451,33 @@ const workspace = CONFIG.workspaceDir;
     commandVerdict: () => ({ decision: "pass", message: "" }),
   });
   check("C14 symlink ke data agy tetap ditolak", verdict.decision === "deny", verdict);
+  const tilde = decideTool({
+    role: "engineer",
+    mode: "auto",
+    name: "read_file",
+    args: { Path: "~/.gemini/settings.json" },
+    workspaceDir: workspace,
+    taskDir: join(CONFIG.tasksDir, "T-x"),
+    commandVerdict: () => ({ decision: "pass", message: "" }),
+  });
+  check("C14b path `~/.gemini` diperluas lalu ditolak", tilde.decision === "deny", tilde);
+
+  const shell = (command: string, mode: AutonomyMode = "ask") =>
+    decideTool({
+      role: "engineer",
+      mode,
+      name: "run_command",
+      args: { CommandLine: command },
+      workspaceDir: workspace,
+      taskDir: join(CONFIG.tasksDir, "T-x"),
+      commandVerdict: () => ({ decision: "pass", message: "" }),
+    }).decision;
+  check("C15 `cd workspace && cat` = cat (allow-list)", shell(`cd ${workspace} && cat a.txt`) === "allow");
+  check("C16 `cd` saja ke workspace tidak ditanyakan", shell(`cd "${workspace}"`) === "allow");
+  check("C17 `cd /etc && cat` tetap kartu", shell("cd /etc && cat passwd") === "ask");
+  check("C18 `cd workspace && rm -rf` tetap ditolak aturan role", shell(`cd ${workspace} && rm -rf node_modules`) === "deny");
+  check("C19 redirect tidak lolos allow-list", shell("cat a.txt > b.txt") === "ask");
+  check("C20 Hanya baca: `find -delete` ditolak", shell("find . -name x -delete", "readonly") === "deny");
 }
 
 // ---------- D. pertanyaan, Stop, antrean ----------
@@ -474,6 +508,8 @@ const workspace = CONFIG.workspaceDir;
   await h.runner.interrupt();
   await h.done(3);
   check("D8 Stop → session/cancel → result interrupted", h.calls.cancels === 1 && h.outcomes[2]?.interrupted === true && h.of("result").at(-1)?.interrupted === true, h.outcomes[2]);
+  const stoppedTool = h.of("tool_result").find((r) => r.isError && r.preview === "Dihentikan owner.");
+  check("D8b perintah yang dihentikan berketerangan, bukan kosong", stoppedTool !== undefined, h.of("tool_result").slice(-2));
   check("D9 Stop membatalkan pesan antre", h.of("notice").some((n) => n.text.includes("1 pesan")) && h.calls.prompts.length === 5);
 
   h.runner.send("slow:150");

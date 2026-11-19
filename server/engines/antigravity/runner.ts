@@ -112,6 +112,8 @@ export class AcpTaskRunner implements AgentRunner {
   private readonly cancelled = new Set<string>();
   /** Keputusan hook per toolCallId — `session/request_permission` dijawab dari sini. */
   private readonly decisions = new Map<string, "allow" | "deny">();
+  /** Alasan tolak per toolCallId, untuk isi hasil tool (agy tidak mengirim pesan error-nya). */
+  private readonly denyReasons = new Map<string, string>();
   private readonly mapper: AcpEventMapper;
   private backgroundTurn = false;
   private backgroundStarted = 0;
@@ -134,6 +136,11 @@ export class AcpTaskRunner implements AgentRunner {
     this.sessionId = sessionId;
     this.mapper = new AcpEventMapper((event) => this.emit(event), {
       onQuestion: (toolCallId, args) => this.openQuestion(toolCallId, args),
+      failureReason: (toolCallId) => {
+        const reason = this.denyReasons.get(toolCallId);
+        this.denyReasons.delete(toolCallId);
+        return reason ?? (this.turn?.stopped ? "Dihentikan owner." : undefined);
+      },
     });
     this.hook = registerHookHandler((payload) => this.onHook(payload));
   }
@@ -708,12 +715,7 @@ export class AcpTaskRunner implements AgentRunner {
       if (id) this.decisions.set(id, "allow");
       return { decision: "allow" };
     }
-    if (verdict.decision === "deny") {
-      if (id) this.decisions.set(id, "deny");
-      const tool = uiTool(name, args);
-      this.emit({ type: "notice", text: `Ditolak pagar AI Team (${tool.name}): ${verdict.reason}` });
-      return { decision: "deny", reason: `Ditolak AI Team: ${verdict.reason}` };
-    }
+    if (verdict.decision === "deny") return this.deny(id, `Ditolak pagar AI Team: ${verdict.reason}`);
 
     const tool = uiTool(name, args);
     const approvalId = id || `hook-${Date.now()}`;
@@ -727,21 +729,20 @@ export class AcpTaskRunner implements AgentRunner {
       canRemember: false,
     })) as ApprovalDecision;
 
-    if (this.cancelled.delete(approvalId)) {
-      if (id) this.decisions.set(id, "deny");
-      return { decision: "deny", reason: decision.message ?? "Dibatalkan oleh owner." };
-    }
+    if (this.cancelled.delete(approvalId)) return this.deny(id, decision.message ?? "Dibatalkan oleh owner.");
     this.emit({ type: "approval_resolved", approvalId, decision: decision.decision, message: decision.message });
-    if (!(await this.resumeAfterDecision())) {
-      if (id) this.decisions.set(id, "deny");
-      return { decision: "deny", reason: "Dibatalkan oleh owner." };
-    }
-    if (decision.decision === "deny") {
-      if (id) this.decisions.set(id, "deny");
-      return { decision: "deny", reason: `Ditolak owner: ${decision.message?.trim() || "tanpa alasan."}` };
-    }
+    if (!(await this.resumeAfterDecision())) return this.deny(id, "Dibatalkan oleh owner.");
+    if (decision.decision === "deny") return this.deny(id, `Ditolak owner: ${decision.message?.trim() || "tanpa alasan."}`);
     if (id) this.decisions.set(id, "allow");
     return { decision: "allow" };
+  }
+
+  private deny(toolCallId: string, reason: string): HookAnswer {
+    if (toolCallId) {
+      this.decisions.set(toolCallId, "deny");
+      this.denyReasons.set(toolCallId, reason);
+    }
+    return { decision: "deny", reason };
   }
 
   private async awaitDecision(id: string, event: UiEvent): Promise<unknown> {
@@ -850,6 +851,7 @@ export class AcpTaskRunner implements AgentRunner {
     this.proc = undefined;
     this.sessionDir = undefined;
     this.decisions.clear();
+    this.denyReasons.clear();
     if (!proc) return;
     await proc.mcp.revoke();
     await proc.kill();
