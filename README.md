@@ -12,6 +12,9 @@ Aplikasi pribadi untuk menugaskan pekerjaan nyata ke empat rekan kerja AI senior
 Semua bot memakai **sesi login Claude Code yang sudah ada di mesin ini** (`~/.claude/.credentials.json`) lewat
 `@anthropic-ai/claude-agent-sdk` — tanpa `ANTHROPIC_API_KEY`. Buktinya ada di sidebar: email dan tipe langganan Anda.
 
+Bot juga bisa dijalankan dengan **Gemini lewat Antigravity CLI** dan akun Google Anda, dipilih per bot, per tugas, dan saat
+oper. Lihat [Mesin Gemini (Antigravity)](#mesin-gemini-antigravity), termasuk risikonya bagi akun.
+
 ## Jalankan
 
 ```bash
@@ -239,7 +242,7 @@ Hal yang hanya berlaku di satu proyek masuk ke konteks/memori project, bukan ke 
 
 ## Konteks & sesi
 
-Tiap **penugasan** punya sesi Claude sendiri (`task.json` → `assignments[].sessionId`), jadi konteks antar tugas tidak tercampur dan dua tugas QA bisa jalan bersamaan. Sesi disimpan, sehingga:
+Tiap **penugasan** punya sesi Claude sendiri (atau sesi agy untuk penugasan Gemini; `task.json` → `assignments[].sessionId`), jadi konteks antar tugas tidak tercampur dan dua tugas QA bisa jalan bersamaan. Sesi disimpan, sehingga:
 
 - tugas yang menganggur lebih dari `IDLE_SHUTDOWN_MS` (default 10 menit) menutup subprocess-nya, dan pesan berikutnya melanjutkan sesi yang sama;
 - tugas yang sedang berjalan saat server mati akan **dilanjutkan otomatis** setelah server hidup lagi.
@@ -256,6 +259,59 @@ Urutan evaluasi Claude Code: **hooks → deny → ask → permission mode → al
 
 Aturan per bot ada di `server/roles.ts`, persona di `server/prompts/*.md`. Keduanya memang dibuat untuk Anda sunting.
 
+## Mesin Gemini (Antigravity)
+
+Selain Claude, bot bisa dijalankan dengan Gemini lewat Antigravity CLI (`agy acp`, Agent Client Protocol), memakai akun
+Google yang sudah login di `agy`.
+
+> **Risiko akun.** FAQ Antigravity menyebut pemakaian `agy` di dalam aplikasi lain belum didukung untuk paket pribadi,
+> dan Terms-nya (pasal 6) membolehkan Google menangguhkan akun. Peringatan yang sama tampil di UI di setiap pilihan Gemini.
+
+**Menyiapkan**
+
+1. Pasang Antigravity CLI dan login sekali seperti biasa. Login tersimpan di keyring OS, jadi AI Team memakai akun yang
+   sama tanpa login ulang. Riwayat dan setelan `agy` milik AI Team terpisah di `data/antigravity/`; `~/.gemini` Anda
+   tidak disentuh.
+2. Buka **Pengaturan → Mesin bawaan tiap bot**. Label hijau "Antigravity siap" berarti `agy` ditemukan, sudah login,
+   dan daftar modelnya terbaca. Kalau kuning, alasannya tertulis di sana; tekan **Periksa lagi** setelah memperbaikinya.
+
+**Memilih mesin**
+
+- **Pengaturan:** mesin bawaan dan model Gemini per bot. Model Claude tetap dari `.env`.
+- **+ Tugas** dan **Oper ke…:** mengikuti setelan bot yang dipilih, dan bisa diganti per penugasan. Jadi
+  `QA (Gemini) → Engineer (Claude)` bisa terjadi dalam satu tugas; bot berikutnya menerima ringkasan serah terima yang sama.
+- Penugasan Gemini ditandai lencana **Gemini** di header tugas dan di daftar tugas.
+- Panel **Tanya** dan kurator memori tetap memakai Claude.
+
+**Cara pagarnya bekerja**
+
+`agy` tidak meminta izin untuk membaca atau menulis berkas. Karena itu AI Team memasang hook `PreToolUse` di folder
+data `agy` miliknya. Sebelum `agy` memanggil tool apa pun, hook mengirimkannya ke server AI Team
+(`server/engines/antigravity/hook-client.ts` → `/api/internal/agy-hook`). Server menilainya dengan aturan yang sama
+dengan jalur Claude: `server/policy.ts`, aturan role di `server/roles.ts`, folder terlindung, dan mode otonomi.
+Hasilnya salah satu dari tiga:
+
+- diizinkan;
+- ditolak dengan alasan, yang dibaca agen sebelum ia melanjutkan;
+- kartu persetujuan di UI.
+
+Kalau server tidak bisa dihubungi, hook menolak.
+
+- Bot tidak bisa membaca atau menulis folder data `agy`, `~/.gemini`, maupun kode `server/engines/antigravity/`.
+- Yang selalu ditolak: subagen, swarm, browser bawaan `agy`, dan server MCP selain `team`/`browser`. QA dan UI/UX
+  memakai browser AI Team, jadi tab **Live** dan **Ambil alih** tetap jalan.
+- "Izinkan & ingat" tidak tersedia untuk Gemini. Setiap perintah di luar allow-list dimintakan persetujuan sendiri.
+
+**Bedanya dengan Claude**
+
+- Tidak ada biaya $. Baris hasil turn menampilkan jumlah token.
+- Pertanyaan agen muncul sebagai kartu pertanyaan biasa. Membalas lewat chat juga dihitung sebagai jawaban.
+- `agy` tidak mengirim isi hasil tool MCP (browser, team), jadi kartunya hanya bertuliskan "selesai". Isinya terlihat
+  di tab Live dan di laporan.
+- Perintah panjang bisa dipindah `agy` ke latar. Turn yang dimulai agen sendiri ditandai "dimulai agen sendiri".
+- `agy` memperbarui dirinya sendiri. Kalau perilakunya berubah, mulai pemeriksaan dari status di Pengaturan dan
+  `bun run check:acp`.
+
 ## Konfigurasi (`.env`)
 
 | Variabel | Arti |
@@ -266,10 +322,15 @@ Aturan per bot ada di `server/roles.ts`, persona di `server/prompts/*.md`. Kedua
 | `EFFORT_*` | `low` … `max`. Makin tinggi makin teliti, makin lambat, makin boros kuota. |
 | `MAX_CONCURRENT_AGENTS` | Berapa tugas boleh jalan bersamaan (default 2). |
 | `IDLE_SHUTDOWN_MS` | Kapan subprocess tugas yang menganggur ditutup (default 10 menit). |
-| `STOP_GRACE_MS` | Batas tunggu turn yang dihentikan dengan Stop (default 20 detik); lewat dari itu proses Claude ditutup paksa (sesinya tetap bisa dilanjutkan). |
+| `STOP_GRACE_MS` | Batas tunggu turn yang dihentikan dengan Stop (default 20 detik); lewat dari itu proses agen (Claude atau `agy`) ditutup paksa (sesinya tetap bisa dilanjutkan). |
 | `ASK_TIMEOUT_MS` | Batas waktu satu jawaban panel Tanya (default 5 menit). |
 | `ALLOWED_HOSTS` / `ALLOWED_ORIGINS` | Host/Origin tambahan yang boleh membuka API dan WebSocket, dipisah koma. Bawaan: `127.0.0.1`, `localhost`, `::1`, plus `ai-team.local` kalau `/etc/hosts` mengarahkannya ke `127.0.0.1` (dicek ulang tiap 30 detik). Permintaan dari situs lain ditolak `403` (anti CSRF dan DNS rebinding). |
 | `INCLUDE_USER_SETTINGS` | `1` untuk ikut memuat skill/plugin global dari `~/.claude`. |
+| `AGY_BIN` | Perintah Antigravity CLI (default `agy` dari `PATH`). |
+| `AGY_DIR` | Folder data `agy` milik AI Team (default `data/antigravity`). |
+| `AGY_HOOK_TIMEOUT_SEC` | Batas tunggu satu kartu persetujuan Gemini sebelum dianggap ditolak (default 6 jam). |
+| `AGY_BACKGROUND_QUIET_MS` | Turn latar dari `agy` dianggap selesai setelah sekian lama tanpa update (default 15 detik). |
+| `AGY_TRACE` | Path berkas untuk mencatat lalu lintas ACP mentah. Hanya untuk diagnosis: isinya memuat percakapan. |
 
 ## Data
 
@@ -286,6 +347,7 @@ data/memory.md                 memori global (lintas project)
 data/projects/<id>/project.json  nama, URL target, folder workspace
 data/projects/<id>/context.md    konteks project yang Anda tulis
 data/projects/<id>/memory.md     memori project (ditulis bot lewat `remember`)
+data/antigravity/                riwayat sesi `agy` milik AI Team + config/hooks.json (pagar) — login tetap di keyring
 ```
 
 Hapus `data/` untuk mulai dari nol (sesi Claude Code-nya sendiri ada di `~/.claude/projects/`).
