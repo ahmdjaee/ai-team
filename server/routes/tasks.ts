@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { Router } from "express";
 import { curator } from "../agent/curator.ts";
-import { scheduler } from "../agent/scheduler.ts";
+import { resolveEngine, scheduler } from "../agent/scheduler.ts";
 import { BOUNDARY, live } from "../browser/live.ts";
 import { CONFIG } from "../config.ts";
 import { getDeleted } from "../deleted-tasks.ts";
@@ -30,7 +30,7 @@ import {
   updateTask,
   type TaskStatus,
 } from "../tasks.ts";
-import type { AutonomyMode } from "../types.ts";
+import { isEngineId, type AutonomyMode, type EngineId } from "../types.ts";
 import { defaultModeFor } from "../settings.ts";
 
 export const tasksRouter = Router();
@@ -68,6 +68,16 @@ tasksRouter.get("/tasks", (req, res) => {
   res.json({ tasks, slots: scheduler.stats() });
 });
 
+/** `engine`/`model` opsional dari body; `error` kalau nilainya ada tapi tidak dikenal. */
+function engineChoice(body: unknown): { engine?: EngineId; model?: string; error?: string } {
+  const raw = (body ?? {}) as { engine?: unknown; model?: unknown };
+  if (raw.engine !== undefined && raw.engine !== null && raw.engine !== "" && !isEngineId(raw.engine)) {
+    return { error: "mesin tidak dikenal" };
+  }
+  const model = typeof raw.model === "string" && /^[a-z0-9][a-z0-9.-]{0,79}$/i.test(raw.model.trim()) ? raw.model.trim() : undefined;
+  return { engine: isEngineId(raw.engine) ? raw.engine : undefined, model };
+}
+
 tasksRouter.post("/tasks", (req, res) => {
   const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
   const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
@@ -89,7 +99,14 @@ tasksRouter.post("/tasks", (req, res) => {
         ? project.targetUrl || CONFIG.targetUrl || undefined
         : undefined;
 
-  const task = createTask({ title, description: description || title, role, projectId: project.id, targetUrl });
+  const choice = engineChoice(req.body);
+  if (choice.error) {
+    res.status(400).json({ error: choice.error });
+    return;
+  }
+  const { engine, model } = resolveEngine(role, choice.engine, choice.model);
+
+  const task = createTask({ title, description: description || title, role, projectId: project.id, targetUrl, engine, model });
   scheduler.start(task);
   res.json({ task });
 });
@@ -289,7 +306,12 @@ tasksRouter.post("/tasks/:id/handoff", async (req, res) => {
     return;
   }
   const note = typeof req.body?.note === "string" ? req.body.note.trim() : undefined;
-  const task = await scheduler.handoff(req.params.id, role, note);
+  const choice = engineChoice(req.body);
+  if (choice.error) {
+    res.status(400).json({ error: choice.error });
+    return;
+  }
+  const task = await scheduler.handoff(req.params.id, role, note, choice);
   if (!task) {
     res.status(404).json({ error: "tugas tidak ditemukan" });
     return;

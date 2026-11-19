@@ -3,6 +3,15 @@ export type RoleId = "qa" | "engineer" | "devops" | "uiux";
 /** Seberapa bebas agen bertindak dalam satu tugas. */
 export type AutonomyMode = "auto" | "ask" | "readonly";
 
+/** Mesin agen yang menjalankan satu penugasan: Claude Agent SDK, atau Antigravity CLI (`agy acp`). */
+export type EngineId = "claude" | "antigravity";
+
+export const ENGINE_IDS: EngineId[] = ["claude", "antigravity"];
+
+export function isEngineId(value: unknown): value is EngineId {
+  return typeof value === "string" && (ENGINE_IDS as string[]).includes(value);
+}
+
 /** Hal yang pantas menarik perhatian pemilik produk, lintas tugas. */
 export type AttentionEvent = {
   kind: "approval" | "question" | "needs_review" | "failed";
@@ -57,6 +66,8 @@ export type UiEvent =
       apiKeySource: string;
       toolCount: number;
       mcpServers: { name: string; status: string }[];
+      /** Kosong di event lama = Claude. */
+      engine?: EngineId;
     }
   | {
       type: "result";
@@ -72,8 +83,10 @@ export type UiEvent =
       interrupted?: boolean;
       /** Turn yang dimulai CLI sendiri (mis. notifikasi Bash background), bukan jawaban atas pesan kita. */
       background?: boolean;
+      /** Token turn ini (mesin yang tidak melaporkan biaya, mis. Antigravity). */
+      tokens?: number;
     }
-  | { type: "handoff"; from: RoleId; to: RoleId; note?: string }
+  | { type: "handoff"; from: RoleId; to: RoleId; note?: string; fromEngine?: EngineId; toEngine?: EngineId }
   | { type: "notice"; text: string }
   /** report.md baru saja ditulis agen — tab Laporan memuat ulang. Tidak disimpan. */
   | { type: "report_changed" }

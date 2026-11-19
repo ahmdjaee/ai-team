@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { CONFIG } from "./config.ts";
+import { ANTIGRAVITY_CODE_DIR, PERSONAL_GEMINI_DIR } from "./protected.ts";
 import type { AutonomyMode, RoleId } from "./types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -44,6 +45,15 @@ export const DENY_ALWAYS = [
   `Read(${abs(`${CONFIG.tasksDir}/**/notes.md`)})`,
   `Write(${abs(`${CONFIG.tasksDir}/**/notes.md`)})`,
   `Edit(${abs(`${CONFIG.tasksDir}/**/notes.md`)})`,
+  // Mesin Antigravity: data & hooks.json milik AI Team, ~/.gemini pribadi, dan kode hook-nya.
+  // Bot Claude yang menyunting salah satunya bisa mematikan pagar bot Gemini.
+  ...[CONFIG.antigravity.dir, PERSONAL_GEMINI_DIR].flatMap((dir) => [
+    `Read(${abs(`${dir}/**`)})`,
+    `Write(${abs(`${dir}/**`)})`,
+    `Edit(${abs(`${dir}/**`)})`,
+  ]),
+  `Write(${abs(`${ANTIGRAVITY_CODE_DIR}/**`)})`,
+  `Edit(${abs(`${ANTIGRAVITY_CODE_DIR}/**`)})`,
 ];
 
 export const ROLES: Record<RoleId, RoleDef> = {

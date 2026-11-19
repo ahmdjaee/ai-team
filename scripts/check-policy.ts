@@ -1,7 +1,18 @@
 /** Tabel uji pagar keras. Deterministik, tanpa biaya model: bun run check:policy */
 import { classifyCommand, commitRequestedIn, type PolicyCategory } from "../server/policy.ts";
 
-const ctx = { workspaceDir: "/var/www/ai-team/workspace", taskDir: "/var/www/ai-team/data/tasks/T-001" };
+const ctx = {
+  workspaceDir: "/var/www/ai-team/workspace",
+  taskDir: "/var/www/ai-team/data/tasks/T-001",
+  // Bentuk yang dihasilkan protectedCommandPaths(): path absolut plus ekor relatifnya.
+  protectedPaths: [
+    "/var/www/ai-team/data/antigravity",
+    "/home/owner/.gemini",
+    "/var/www/ai-team/server/engines/antigravity",
+    "data/antigravity",
+    "engines/antigravity",
+  ],
+};
 
 type Case = [command: string, decision: "deny" | "ask" | "pass", category?: PolicyCategory, commitRequested?: boolean];
 
@@ -56,6 +67,17 @@ const CASES: Case[] = [
   ["sudo reboot", "deny"],
   ["ssh host 'shutdown -h now'", "deny"],
   ["psql -c 'DROP DATABASE produksi'", "deny"],
+
+  // folder pagar mesin Antigravity dan ~/.gemini pribadi
+  ["cat /var/www/ai-team/data/antigravity/gemini/config/hooks.json", "deny"],
+  ["sed -i 's/deny/allow/' ../ai-team/data/antigravity/gemini/config/hooks.json", "deny"],
+  ["cat ~/.gemini/antigravity-cli/settings.json", "deny"],
+  ["ls -la $HOME/.gemini", "deny"],
+  ["cat /home/owner/.gemini/x", "deny"],
+  ["cat /var/www/ai-team/server/engines/antigravity/hook-client.ts", "deny"],
+  ["cat ~/.geminirc", "pass"],
+  ["ls ./data/antigravity-assets", "pass"],
+  ["grep -rn antigravity src/", "pass"],
 
   // git commit — format pesan
   ['git commit -m "feat: add login"', "pass", undefined, true],

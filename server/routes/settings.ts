@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getSettings, updateSettings, type Settings } from "../settings.ts";
+import { getSettings, updateSettings, type SettingsPatch } from "../settings.ts";
 
 export const settingsRouter = Router();
 
@@ -8,7 +8,7 @@ settingsRouter.get("/settings", (_req, res) => {
 });
 
 settingsRouter.put("/settings", (req, res) => {
-  const body = req.body as Partial<Settings> | undefined;
+  const body = req.body as SettingsPatch | undefined;
   if (!body || typeof body !== "object") {
     res.status(400).json({ error: "body tidak valid" });
     return;

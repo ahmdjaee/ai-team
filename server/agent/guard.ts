@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { HookCallbackMatcher } from "@anthropic-ai/claude-agent-sdk";
 import { workspaceForTask } from "../context.ts";
 import { CATEGORY_LABEL, classifyCommand, commitDecision } from "../policy.ts";
+import { protectedCommandPaths } from "../protected.ts";
 import { threads } from "../store.ts";
 import { reportPath, taskDir } from "../tasks.ts";
 import type { RoleId, StoredEvent } from "../types.ts";
@@ -26,6 +27,29 @@ function ownerRequestedCommit(taskId: string): boolean {
     return decision !== undefined;
   });
   return decision === true;
+}
+
+/**
+ * Penilaian pagar keras untuk satu perintah shell tugas ini. Dipakai PreToolUse hook Claude dan
+ * hook Antigravity, supaya kedua mesin menolak dan menanyakan hal yang persis sama.
+ */
+export function commandVerdict(
+  taskId: string,
+  role: RoleId,
+  command: string,
+): { decision: "deny" | "ask" | "pass"; message: string } {
+  const verdict = classifyCommand(command, {
+    // Workspace project tugas ini — bukan workspace global.
+    workspaceDir: workspaceForTask(taskId),
+    taskDir: taskDir(taskId),
+    // Hanya Engineer yang commit otomatis; role lain punya deny atau kartu persetujuan.
+    commitRequested: role === "engineer" ? ownerRequestedCommit(taskId) : undefined,
+    protectedPaths: protectedCommandPaths(),
+  });
+  if (verdict.decision === "pass") return { decision: "pass", message: "" };
+  const label = verdict.category ? ` · ${CATEGORY_LABEL[verdict.category]}` : "";
+  const head = verdict.decision === "deny" ? "Ditolak pagar keras" : "Perlu persetujuan owner";
+  return { decision: verdict.decision, message: `${head}${label}: ${verdict.reason}.` };
 }
 
 /**
@@ -63,22 +87,13 @@ export function guardHooks(
             const command = (input as { tool_input?: { command?: unknown } }).tool_input?.command;
             if (typeof command !== "string") return {};
 
-            const verdict = classifyCommand(command, {
-              // Workspace project tugas ini — bukan workspace global.
-              workspaceDir: workspaceForTask(taskId),
-              taskDir: taskDir(taskId),
-              // Hanya Engineer yang commit otomatis; role lain punya deny atau kartu persetujuan.
-              commitRequested: role === "engineer" ? ownerRequestedCommit(taskId) : undefined,
-            });
+            const verdict = commandVerdict(taskId, role, command);
             if (verdict.decision === "pass") return {};
-
-            const label = verdict.category ? ` · ${CATEGORY_LABEL[verdict.category]}` : "";
-            const head = verdict.decision === "deny" ? "Ditolak pagar keras" : "Perlu persetujuan owner";
             return {
               hookSpecificOutput: {
                 hookEventName: "PreToolUse" as const,
                 permissionDecision: verdict.decision,
-                permissionDecisionReason: `${head}${label}: ${verdict.reason}.`,
+                permissionDecisionReason: verdict.message,
               },
             };
           },

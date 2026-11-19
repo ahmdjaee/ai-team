@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { CONFIG } from "./config.ts";
 import { isDeleted } from "./deleted-tasks.ts";
 import { trimMemory } from "./memory.ts";
-import type { AutonomyMode, ContextUsage, RoleId } from "./types.ts";
+import type { AutonomyMode, ContextUsage, EngineId, RoleId } from "./types.ts";
 
 export type TaskStatus = "queued" | "running" | "waiting" | "needs_review" | "done" | "failed" | "cancelled";
 
@@ -12,6 +12,10 @@ export const ACTIVE_STATUSES: TaskStatus[] = ["queued", "running", "waiting"];
 
 export type Assignment = {
   role: RoleId;
+  /** Mesin yang menjalankan penugasan ini; kosong (data lama) = Claude. `sessionId` milik mesin ini. */
+  engine?: EngineId;
+  /** Model yang dipilih saat penugasan dibuat (Antigravity); Claude memakai model role dari `.env`. */
+  model?: string;
   sessionId?: string;
   startedAt: string;
   endedAt?: string;
@@ -201,6 +205,8 @@ export function createTask(input: {
   role: RoleId;
   projectId: string;
   targetUrl?: string;
+  engine?: EngineId;
+  model?: string;
 }): Task {
   const now = new Date().toISOString();
   const task: Task = {
@@ -214,7 +220,7 @@ export function createTask(input: {
     createdAt: now,
     updatedAt: now,
     costUsd: 0,
-    assignments: [{ role: input.role, startedAt: now, costUsd: 0 }],
+    assignments: [{ role: input.role, startedAt: now, costUsd: 0, ...engineFields(input.engine, input.model) }],
   };
   mkdirSync(assetsDir(task.id), { recursive: true });
   persist(task);
@@ -267,6 +273,17 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   return next;
 }
 
+/** Field mesin penugasan: Claude tidak ditulis supaya task.json lama dan baru berbentuk sama. */
+function engineFields(engine?: EngineId, model?: string): Pick<Assignment, "engine" | "model"> {
+  if (!engine || engine === "claude") return {};
+  return { engine, ...(model ? { model } : {}) };
+}
+
+/** Mesin penugasan yang sedang berjalan. */
+export function engineOf(assignment: Assignment): EngineId {
+  return assignment.engine ?? "claude";
+}
+
 /** Penugasan yang sedang berjalan (selalu elemen terakhir). */
 export function currentAssignment(task: Task): Assignment {
   const last = task.assignments[task.assignments.length - 1];
@@ -287,14 +304,20 @@ export function patchAssignment(id: string, patch: Partial<Assignment>): Task | 
 }
 
 /** Tutup penugasan sekarang dan buka penugasan baru untuk role lain. */
-export function addAssignment(id: string, role: RoleId, handoffNote?: string): Task | undefined {
+export function addAssignment(
+  id: string,
+  role: RoleId,
+  handoffNote?: string,
+  engine?: EngineId,
+  model?: string,
+): Task | undefined {
   const task = index.get(id);
   if (!task) return undefined;
   const now = new Date().toISOString();
   const assignments = [...task.assignments];
   const last = assignments[assignments.length - 1];
   if (last && !last.endedAt) assignments[assignments.length - 1] = { ...last, endedAt: now };
-  assignments.push({ role, startedAt: now, handoffNote, costUsd: 0 });
+  assignments.push({ role, startedAt: now, handoffNote, costUsd: 0, ...engineFields(engine, model) });
   return updateTask(id, { assignments, role, status: "queued", suggestedNext: undefined });
 }
 

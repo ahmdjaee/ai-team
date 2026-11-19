@@ -69,6 +69,17 @@ export const CONFIG = {
   /** Origin tambahan yang boleh memanggil API dan WebSocket (dipisah koma), mis. https://ai-team.example. */
   allowedOrigins: str("ALLOWED_ORIGINS", ""),
   targetUrl: str("TARGET_URL", ""),
+  antigravity: {
+    /** Perintah Antigravity CLI (`agy`). */
+    bin: str("AGY_BIN", "agy"),
+    /**
+     * Folder data agy milik AI Team (`--gemini-dir`): percakapan, config, dan hooks.json bot ada di
+     * sini, terpisah dari ~/.gemini pribadi. Login tetap dari keyring OS (akun Google yang sama).
+     */
+    dir: resolve(str("AGY_DIR", join(dataDir, "antigravity"))),
+    /** Batas tunggu hook PreToolUse — termasuk kartu persetujuan yang menunggu owner. */
+    hookTimeoutSec: num("AGY_HOOK_TIMEOUT_SEC", 6 * 60 * 60),
+  },
 } as const;
 
 /**

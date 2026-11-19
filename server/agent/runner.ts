@@ -16,6 +16,7 @@ import { createTeamServer } from "../team/mcp.ts";
 import type { AskQuestion, AutonomyMode, ContextUsage, RoleId, UiEvent, WorkerStatus } from "../types.ts";
 import { bus } from "./bus.ts";
 import { resultMeta, toUiEvents, type ResultMeta } from "./events.ts";
+import type { AgentRunner } from "./runner-api.ts";
 import { guardHooks } from "./guard.ts";
 
 /** Selama turn berjalan, indikator konteks cukup diperbarui sesekali. */
@@ -102,7 +103,8 @@ export type RunnerHooks = {
  * Satu runner = satu penugasan aktif (satu tugas yang sedang dipegang satu bot).
  * Sesi Claude-nya milik tugas itu sendiri, bukan milik role.
  */
-export class TaskRunner {
+export class TaskRunner implements AgentRunner {
+  readonly engine = "claude" as const;
   status: WorkerStatus = "idle";
   sessionId?: string;
 

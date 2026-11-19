@@ -1,5 +1,7 @@
 /** Uji kontrak role UI/UX. Deterministik, tanpa model: bun run check:roles */
 import { readFileSync } from "node:fs";
+import { CONFIG } from "../server/config.ts";
+import { ANTIGRAVITY_CODE_DIR, PERSONAL_GEMINI_DIR } from "../server/protected.ts";
 import { findingHeads, reportRounds, verdictOf } from "../server/recap.ts";
 import { ROLES, permissionsFor, resolvePermissionMode } from "../server/roles.ts";
 import { findingStatusTools } from "../server/team/mcp.ts";
@@ -26,6 +28,15 @@ expect("UI/UX menulis laporan", uiux.producesReport, true);
 expect("UI/UX boleh memakai tool browser", uiux.permissions.allow.includes("mcp__browser__*"), true);
 expect("UI/UX tidak boleh commit", uiux.permissions.deny.includes("Bash(git commit:*)"), true);
 expect("konektor pribadi tetap diblokir", uiux.permissions.deny.includes("mcp__claude_ai_*"), true);
+for (const role of ["qa", "engineer", "devops", "uiux"] as RoleId[]) {
+  const deny = ROLES[role].permissions.deny;
+  const guarded =
+    deny.includes(`Edit(/${CONFIG.antigravity.dir}/**)`) &&
+    deny.includes(`Read(/${CONFIG.antigravity.dir}/**)`) &&
+    deny.includes(`Read(/${PERSONAL_GEMINI_DIR}/**)`) &&
+    deny.includes(`Edit(/${ANTIGRAVITY_CODE_DIR}/**)`);
+  expect(`${role}: data & kode pagar Antigravity diblokir`, guarded, true);
+}
 expect("mode ask memakai acceptEdits untuk report.md", resolvePermissionMode(uiux, "ask"), "acceptEdits");
 expect("mode readonly memakai plan", resolvePermissionMode(uiux, "readonly"), "plan");
 
