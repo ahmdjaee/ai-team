@@ -125,6 +125,6 @@ export function MemoryRoute() {
 }
 
 export function SettingsRoute() {
-  const { roles, onSettingsSaved } = useAppContext();
-  return <Settings roles={roles} onSaved={onSettingsSaved} />;
+  const { roles, tasks, onSettingsSaved } = useAppContext();
+  return <Settings roles={roles} tasks={tasks} onSaved={onSettingsSaved} />;
 }

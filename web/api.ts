@@ -1,5 +1,18 @@
-import type { AttentionEvent, AutonomyMode, ContextUsage, EngineId, RoleId, StoredEvent, UiEvent, WorkerStatus } from "../server/types.ts";
-import type { Settings, SettingsPatch } from "../server/settings.ts";
+import type {
+  AccountView,
+  AttentionEvent,
+  AutonomyMode,
+  ContextUsage,
+  Effort,
+  EngineId,
+  ModelOption,
+  ProviderId,
+  RoleId,
+  StoredEvent,
+  UiEvent,
+  WorkerStatus,
+} from "../server/types.ts";
+import type { ModelDefaults, ModelKey, Settings, SettingsPatch } from "../server/settings.ts";
 import type { Assignment, Review, Task, TaskStatus, TaskSummary } from "../server/tasks.ts";
 import type { Project } from "../server/projects.ts";
 import type { AskMessage } from "../server/agent/ask.ts";
@@ -17,15 +30,28 @@ import type {
 
 export type { AskMessage, Assignment, AttentionEvent, AutonomyMode, ContextUsage, EngineId, Project, RoleId, Review, Settings, StoredEvent, Task, TaskStatus, TaskSummary, UiEvent, WorkerStatus };
 
+export type { AccountView, Effort, ModelDefaults, ModelKey, ModelOption, ProviderId };
+
+/** Pengaturan dari server plus nilai `.env` yang berlaku kalau model/penalaran dikosongkan. */
+export type SettingsView = Settings & { defaults: ModelDefaults };
+
 export type EngineInfo = {
   id: EngineId;
   label: string;
   available: boolean;
   reason?: string;
   version?: string;
-  models?: { id: string; name: string }[];
+  models?: ModelOption[];
   defaultModel?: string;
   checkedAt?: string;
+};
+
+export const EFFORT_LABEL: Record<Effort, string> = {
+  low: "Rendah",
+  medium: "Sedang",
+  high: "Tinggi",
+  xhigh: "Sangat tinggi",
+  max: "Maksimal",
 };
 export type { DeletedRecapEntry, DeletedRef, ProjectRecap, RecapEntry, RecapFinding, RecapSeverity, RecapTone, RecapTotals, RecapVerdict };
 export type { CoverageCell, CoverageState, Finding, FindingSeverity, FindingStatus, UnlinkedFinding } from "../server/findings.ts";
@@ -85,7 +111,10 @@ export type RoleInfo = {
   id: RoleId;
   title: string;
   blurb: string;
+  /** Model Claude yang berlaku (Pengaturan, lalu `.env`). */
   model: string;
+  effort: Effort;
+  engine: EngineId;
   producesReport: boolean;
   usesBrowser: boolean;
 };
@@ -243,9 +272,19 @@ export const api = {
     }),
   setMode: (id: string, mode: AutonomyMode) =>
     request<{ ok: true; task: Task }>(`/api/tasks/${id}/mode`, { method: "POST", body: JSON.stringify({ mode }) }),
-  settings: () => request<Settings>("/api/settings"),
+  settings: () => request<SettingsView>("/api/settings"),
   saveSettings: (patch: SettingsPatch) =>
-    request<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+    request<SettingsView>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+
+  accounts: () => request<{ accounts: AccountView[] }>("/api/accounts"),
+  startLogin: (provider: ProviderId) =>
+    request<{ account: AccountView }>(`/api/accounts/${provider}/login`, { method: "POST" }),
+  submitLoginCode: (provider: ProviderId, code: string) =>
+    request<{ account: AccountView }>(`/api/accounts/${provider}/login/code`, { method: "POST", body: JSON.stringify({ code }) }),
+  /** Batalkan login yang berjalan, atau tutup hasil login yang sudah selesai. */
+  closeLogin: (provider: ProviderId) => request<{ account: AccountView }>(`/api/accounts/${provider}/login`, { method: "DELETE" }),
+  checkAccount: (provider: ProviderId) => request<{ account: AccountView }>(`/api/accounts/${provider}/check`, { method: "POST" }),
+  logoutAccount: (provider: ProviderId) => request<{ account: AccountView }>(`/api/accounts/${provider}/logout`, { method: "POST" }),
 
   projects: () => request<{ projects: ProjectInfo[] }>("/api/projects"),
   project: (id: string) => request<ProjectDetail>(`/api/projects/${encodeURIComponent(id)}`),

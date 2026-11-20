@@ -1,41 +1,32 @@
-import { useCallback, useEffect, useState } from "react";
-import { api, type EngineId, type EngineInfo } from "../api.ts";
+import type { EngineId, EngineInfo, ModelOption, RoleId, SettingsView } from "../api.ts";
+
+export { useEngines, usableEngine } from "../accounts.ts";
 
 export const ENGINE_SHORT: Record<EngineId, string> = { claude: "Claude", antigravity: "Gemini" };
 
 const ENGINE_IDS: EngineId[] = ["claude", "antigravity"];
 
-/** Daftar mesin dibagi antarkomponen: probe agy butuh beberapa detik dan di-cache server 10 menit. */
-let shared: Promise<EngineInfo[]> | undefined;
-
-export function useEngines(): { engines?: EngineInfo[]; checking: boolean; refresh: () => void } {
-  const [engines, setEngines] = useState<EngineInfo[]>();
-  const [checking, setChecking] = useState(false);
-  const load = useCallback((refresh: boolean) => {
-    if (refresh || !shared) shared = api.engines(refresh).then((data) => data.engines, () => []);
-    setChecking(true);
-    void shared.then((list) => {
-      setEngines(list);
-      setChecking(false);
-    });
-  }, []);
-  useEffect(() => load(false), [load]);
-  return { engines, checking, refresh: () => load(true) };
+/** Model bawaan bot untuk mesin itu: Pengaturan → Bot, lalu `.env` (Claude); Gemini kosong = bawaan agy. */
+export function botDefaultModel(settings: SettingsView | undefined, role: RoleId, engine: EngineId): string | undefined {
+  if (!settings) return undefined;
+  return engine === "claude" ? (settings.claudeModels[role] ?? settings.defaults.claudeModels[role]) : settings.geminiModels[role];
 }
 
-export function geminiInfo(engines?: EngineInfo[]): EngineInfo | undefined {
-  return engines?.find((engine) => engine.id === "antigravity");
+/** Nama model untuk ditampilkan: nama dari daftar akun kalau ada, kalau tidak id-nya. */
+export function modelName(models: ModelOption[] | undefined, id: string | undefined): string | undefined {
+  if (!id) return undefined;
+  return models?.find((model) => model.id === id)?.name ?? id;
 }
 
 /**
- * Pilihan mesin + model Gemini. Claude memakai model role dari `.env`, jadi hanya ditampilkan;
- * Gemini bisa dipilih modelnya, kosong = model bawaan akun agy.
+ * Pilihan mesin + model untuk satu penugasan. Mesin tanpa akun siap tidak bisa dipilih; model
+ * kosong = bawaan bot (`defaultModel`, dari Pengaturan → Bot atau `.env`; Gemini: bawaan akun agy).
  */
 export function EnginePicker({
   engines,
   engine,
   model,
-  claudeModel,
+  defaultModel,
   disabled,
   onChange,
   size = "md",
@@ -43,19 +34,22 @@ export function EnginePicker({
   engines?: EngineInfo[];
   engine: EngineId;
   model?: string;
-  claudeModel?: string;
+  /** Model bawaan bot untuk mesin yang sedang dipilih; hanya untuk label opsi "Bawaan". */
+  defaultModel?: string;
   disabled?: boolean;
   onChange: (engine: EngineId, model?: string) => void;
   size?: "sm" | "md";
 }) {
-  const gemini = geminiInfo(engines);
-  const geminiBlocked = !gemini || !gemini.available;
   const pad = size === "sm" ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs";
+  const info = engines?.find((item) => item.id === engine);
+  const models = info?.models ?? [];
+  const fallback = modelName(models, defaultModel ?? (engine === "antigravity" ? info?.defaultModel : undefined));
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
       <div className="flex gap-1" role="radiogroup" aria-label="Mesin agen">
         {ENGINE_IDS.map((id) => {
-          const blocked = id === "antigravity" && geminiBlocked && engine !== "antigravity";
+          const item = engines?.find((entry) => entry.id === id);
+          const blocked = !item?.available && engine !== id;
           return (
             <button
               key={id}
@@ -63,14 +57,8 @@ export function EnginePicker({
               role="radio"
               aria-checked={engine === id}
               disabled={disabled || blocked}
-              title={
-                id === "antigravity"
-                  ? gemini?.available
-                    ? "Gemini lewat Antigravity CLI, memakai akun Google Anda"
-                    : gemini?.reason ?? "Memeriksa Antigravity CLI…"
-                  : "Claude Agent SDK, memakai login Claude Anda"
-              }
-              onClick={() => onChange(id, id === "antigravity" ? model : undefined)}
+              title={item?.available ? `${ENGINE_SHORT[id]} — memakai akun ${item.label} di app ini` : (item?.reason ?? "Memeriksa akun…")}
+              onClick={() => onChange(id, undefined)}
               className={`rounded-lg border ${pad} disabled:opacity-40 ${
                 engine === id ? "border-accent bg-accent-soft text-accent-ink" : "border-line text-muted hover:border-line-strong"
               }`}
@@ -80,24 +68,23 @@ export function EnginePicker({
           );
         })}
       </div>
-      {engine === "claude" && claudeModel && <span className="truncate font-mono text-[10px] text-faint">{claudeModel}</span>}
-      {engine === "antigravity" && (
-        <select
-          value={model ?? ""}
-          disabled={disabled || !gemini?.models?.length}
-          onChange={(event) => onChange("antigravity", event.target.value || undefined)}
-          aria-label="Model Gemini"
-          className={`max-w-[15rem] rounded-lg border border-line bg-page ${pad} text-ink`}
-        >
-          <option value="">Bawaan agy{gemini?.defaultModel ? ` (${gemini.defaultModel})` : ""}</option>
-          {(gemini?.models ?? []).map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-          {model && !(gemini?.models ?? []).some((item) => item.id === model) && <option value={model}>{model} (tidak terdaftar)</option>}
-        </select>
-      )}
+      <select
+        value={model ?? ""}
+        disabled={disabled || !info?.available}
+        onChange={(event) => onChange(engine, event.target.value || undefined)}
+        aria-label={`Model ${ENGINE_SHORT[engine]}`}
+        title={models.find((item) => item.id === model)?.description}
+        className={`min-w-0 max-w-[16rem] rounded-lg border border-line bg-page ${pad} text-ink`}
+      >
+        <option value="">Bawaan bot{fallback ? ` (${fallback})` : engine === "antigravity" ? " (bawaan agy)" : ""}</option>
+        {models.map((item) => (
+          <option key={item.id} value={item.id} title={item.description}>
+            {item.name}
+          </option>
+        ))}
+        {model && !models.some((item) => item.id === model) && <option value={model}>{model} (tidak terdaftar)</option>}
+      </select>
+      {info && !info.available && <span className="text-[11px] text-tag-yellow-ink">{info.reason}</span>}
     </div>
   );
 }
@@ -106,8 +93,8 @@ export function EnginePicker({
 export function GeminiRiskNote({ className = "" }: { className?: string }) {
   return (
     <p className={`text-[11px] text-faint ${className}`}>
-      Gemini berjalan lewat Antigravity CLI dengan akun Google Anda. Google menyebut pemakaian agy di dalam aplikasi lain
-      belum didukung untuk akun pribadi, dan akun bisa ditangguhkan — pakai dengan sadar risikonya.
+      Gemini berjalan lewat Antigravity CLI dengan akun Google yang Anda tambahkan di app. Google menyebut pemakaian agy di
+      dalam aplikasi lain belum didukung untuk akun pribadi, dan akun bisa ditangguhkan — pakai dengan sadar risikonya.
     </p>
   );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, type EngineId, type ProjectInfo, type RoleId, type RoleInfo, type Settings } from "../api.ts";
+import { api, type EngineId, type ProjectInfo, type RoleId, type RoleInfo, type SettingsView } from "../api.ts";
 import { Combobox } from "./Combobox.tsx";
-import { ENGINE_SHORT, EnginePicker, GeminiRiskNote, useEngines } from "./EnginePicker.tsx";
+import { ENGINE_SHORT, EnginePicker, GeminiRiskNote, botDefaultModel, modelName, usableEngine, useEngines } from "./EnginePicker.tsx";
 
 export function NewTaskDialog({
   roles,
@@ -27,7 +27,7 @@ export function NewTaskDialog({
   const [touchedTarget, setTouchedTarget] = useState(false);
   const [sending, setSending] = useState(false);
   const { engines } = useEngines();
-  const [settings, setSettings] = useState<Settings>();
+  const [settings, setSettings] = useState<SettingsView>();
   const [engine, setEngine] = useState<EngineId>("claude");
   const [model, setModel] = useState<string>();
   /** Mesin mengikuti setelan bot yang dipilih, sampai Anda memilih sendiri. */
@@ -37,11 +37,15 @@ export function NewTaskDialog({
     void api.settings().then(setSettings, () => undefined);
   }, []);
 
+  // Model kosong = bawaan bot; server mengisinya dari Pengaturan saat tugas dibuat. Kalau mesin
+  // bawaan bot belum punya akun, mesin lain yang siap dipakai.
   useEffect(() => {
     if (touchedEngine || !settings) return;
-    setEngine(settings.engines[role]);
-    setModel(settings.geminiModels[role]);
-  }, [role, settings, touchedEngine]);
+    setEngine(usableEngine(settings.engines[role], engines));
+    setModel(undefined);
+  }, [role, settings, touchedEngine, engines]);
+  const engineReady = engines?.find((item) => item.id === engine)?.available ?? false;
+  const switched = settings && !touchedEngine && engines && engine !== settings.engines[role];
 
   // Ganti project → kolom target ikut berganti, selama Anda belum mengisinya sendiri.
   useEffect(() => {
@@ -61,7 +65,7 @@ export function NewTaskDialog({
         projectId,
         targetUrl: selected?.usesBrowser ? targetUrl.trim() || undefined : undefined,
         engine,
-        model: engine === "antigravity" ? model : undefined,
+        model,
       });
       onCreated(task.id);
       onClose();
@@ -125,10 +129,13 @@ export function NewTaskDialog({
               }`}
             >
               <span className="block text-sm text-ink">{item.title}</span>
-              <span className="block font-mono text-[10px] text-muted">
-                {settings?.engines[item.id] === "antigravity"
-                  ? `${ENGINE_SHORT.antigravity}${settings.geminiModels[item.id] ? ` · ${settings.geminiModels[item.id]}` : ""}`
-                  : item.model}
+              <span className="block truncate font-mono text-[10px] text-muted">
+                {(() => {
+                  const botEngine = settings?.engines[item.id] ?? "claude";
+                  const info = engines?.find((entry) => entry.id === botEngine);
+                  const name = modelName(info?.models, botDefaultModel(settings, item.id, botEngine) ?? (botEngine === "claude" ? item.model : undefined));
+                  return `${ENGINE_SHORT[botEngine]}${name ? ` · ${name}` : ""}`;
+                })()}
               </span>
             </button>
           ))}
@@ -140,7 +147,7 @@ export function NewTaskDialog({
             engines={engines}
             engine={engine}
             model={model}
-            claudeModel={selected?.model}
+            defaultModel={botDefaultModel(settings, role, engine) ?? (engine === "claude" ? selected?.model : undefined)}
             onChange={(next, nextModel) => {
               setTouchedEngine(true);
               setEngine(next);
@@ -148,6 +155,11 @@ export function NewTaskDialog({
             }}
           />
         </div>
+        {switched && (
+          <p className="mt-1 text-[11px] text-faint">
+            Mesin bawaan bot ini ({ENGINE_SHORT[settings.engines[role]]}) belum punya akun, jadi tugas ini memakai {ENGINE_SHORT[engine]}.
+          </p>
+        )}
         {engine === "antigravity" && <GeminiRiskNote className="mt-1" />}
 
         {selected?.usesBrowser && (
@@ -172,7 +184,8 @@ export function NewTaskDialog({
           </button>
           <button
             onClick={() => void submit()}
-            disabled={!title.trim() || sending}
+            disabled={!title.trim() || sending || !engineReady}
+            title={engineReady ? undefined : "Mesin ini belum punya akun yang siap — lihat Pengaturan → Akun AI"}
             className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover disabled:opacity-40"
           >
             Buat & jalankan

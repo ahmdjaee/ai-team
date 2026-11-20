@@ -9,7 +9,7 @@ import {
   type RoleId,
   type AutonomyMode,
   type EngineId,
-  type Settings,
+  type SettingsView,
   type ContextUsage,
   type RoleInfo,
   type TaskDetail as TaskDetailData,
@@ -19,7 +19,7 @@ import { formatTokens } from "../activity.ts";
 import { projectPath, type Tab } from "../routes.tsx";
 import { useTaskThread } from "../useTaskThread.ts";
 import { AskPanel } from "./AskPanel.tsx";
-import { ENGINE_SHORT, EnginePicker, GeminiRiskNote, useEngines } from "./EnginePicker.tsx";
+import { ENGINE_SHORT, EnginePicker, GeminiRiskNote, botDefaultModel, modelName, usableEngine, useEngines } from "./EnginePicker.tsx";
 import { Attachments } from "./Attachments.tsx";
 import { Diff } from "./Diff.tsx";
 import { LiveView, lastBrowserAction } from "./LiveView.tsx";
@@ -49,7 +49,7 @@ function HandoffDialog({
   const [note, setNote] = useState(preset?.note ?? "");
   const [sending, setSending] = useState(false);
   const { engines } = useEngines();
-  const [settings, setSettings] = useState<Settings>();
+  const [settings, setSettings] = useState<SettingsView>();
   const [engine, setEngine] = useState<EngineId>("claude");
   const [model, setModel] = useState<string>();
   /** Bawaan = setelan bot tujuan; berhenti mengikuti begitu Anda memilih sendiri. */
@@ -61,9 +61,10 @@ function HandoffDialog({
 
   useEffect(() => {
     if (touchedEngine || !settings) return;
-    setEngine(settings.engines[role]);
-    setModel(settings.geminiModels[role]);
-  }, [role, settings, touchedEngine]);
+    setEngine(usableEngine(settings.engines[role], engines));
+    setModel(undefined);
+  }, [role, settings, touchedEngine, engines]);
+  const engineReady = engines?.find((item) => item.id === engine)?.available ?? false;
 
   return (
     <div className="fixed inset-0 z-20 grid place-items-center bg-scrim p-4" onClick={onClose}>
@@ -98,7 +99,7 @@ function HandoffDialog({
             engines={engines}
             engine={engine}
             model={model}
-            claudeModel={roles.find((item) => item.id === role)?.model}
+            defaultModel={botDefaultModel(settings, role, engine) ?? (engine === "claude" ? roles.find((item) => item.id === role)?.model : undefined)}
             onChange={(next, nextModel) => {
               setTouchedEngine(true);
               setEngine(next);
@@ -112,7 +113,8 @@ function HandoffDialog({
             Batal
           </button>
           <button
-            disabled={sending}
+            disabled={sending || !engineReady}
+            title={engineReady ? undefined : "Mesin ini belum punya akun yang siap — lihat Pengaturan → Akun AI"}
             onClick={async () => {
               setSending(true);
               try {
@@ -120,7 +122,7 @@ function HandoffDialog({
                   role,
                   note: note.trim() || undefined,
                   engine,
-                  model: engine === "antigravity" ? model : undefined,
+                  model,
                 });
                 onDone();
                 onClose();
@@ -139,12 +141,29 @@ function HandoffDialog({
   );
 }
 
-/** Mesin penugasan yang sedang berjalan; Claude tanpa lencana supaya header tugas lama tidak berubah. */
-function EngineBadge({ engine, model }: { engine?: EngineId; model?: string }) {
-  if (!engine || engine === "claude") return null;
+/**
+ * Mesin penugasan yang sedang berjalan. Claude tanpa lencana supaya header tugas lama tidak
+ * berubah, kecuali akunnya bermasalah — lencananya lalu memberi tahu kenapa tugas tertahan.
+ */
+function EngineBadge({ engine = "claude", model }: { engine?: EngineId; model?: string }) {
+  const { engines } = useEngines();
+  const info = engines?.find((item) => item.id === engine);
+  const name = modelName(info?.models, model);
+  if (info && !info.available) {
+    return (
+      <Link
+        to="/settings"
+        title={info.reason}
+        className="rounded bg-tag-yellow px-1.5 py-0.5 text-[11px] text-tag-yellow-ink hover:underline"
+      >
+        {ENGINE_SHORT[engine]} · akun belum siap
+      </Link>
+    );
+  }
+  if (engine === "claude") return null;
   return (
     <span
-      title={`Penugasan ini berjalan di ${ENGINE_SHORT[engine]} (Antigravity CLI)${model ? ` · model ${model}` : " · model bawaan agy"}`}
+      title={`Penugasan ini berjalan di ${ENGINE_SHORT[engine]} (Antigravity CLI)${name ? ` · model ${name}` : " · model bawaan agy"}`}
       className="rounded bg-tag-blue px-1.5 py-0.5 text-[11px] text-tag-blue-ink"
     >
       {ENGINE_SHORT[engine]}
