@@ -914,6 +914,13 @@ async function harness(
   const reset = optionsOf();
   check("S8 null = kembali ke .env", reset.model === CONFIG.models.engineer && reset.effort === CONFIG.effort.engineer, reset);
   check("S9 tanpa Pengaturan, penugasan Claude tidak mengunci model", resolveEngine("engineer", "claude").model === undefined);
+
+  const chosen = createTask({ title: "model", description: "m", role: "engineer", projectId: "P-uji", engine: "claude", model: "claude-pilihan" });
+  const first = chosen.assignments[0];
+  check("S10 model Claude pilihan tugas tersimpan di penugasan", first?.model === "claude-pilihan" && first.engine === undefined, first);
+  const handed = addAssignment(chosen.id, "qa", undefined, "claude", "claude-oper");
+  check("S11 model Claude pilihan oper tersimpan", handed?.assignments.at(-1)?.model === "claude-oper", handed?.assignments.at(-1));
+  updateTask(chosen.id, { status: "cancelled" });
 }
 
 rmSync(sandbox, { recursive: true, force: true });

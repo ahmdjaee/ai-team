@@ -14,7 +14,10 @@ export type Assignment = {
   role: RoleId;
   /** Mesin yang menjalankan penugasan ini; kosong (data lama) = Claude. `sessionId` milik mesin ini. */
   engine?: EngineId;
-  /** Model yang dipilih saat penugasan dibuat (Antigravity); Claude memakai model role dari `.env`. */
+  /**
+   * Model yang dipilih saat penugasan dibuat. Kosong = Pengaturan → Bot saat runner dimulai, lalu
+   * `.env` (Claude) atau model bawaan akun agy (Gemini).
+   */
   model?: string;
   sessionId?: string;
   startedAt: string;
@@ -273,10 +276,12 @@ export function updateTask(id: string, patch: Partial<Task>): Task | undefined {
   return next;
 }
 
-/** Field mesin penugasan: Claude tidak ditulis supaya task.json lama dan baru berbentuk sama. */
+/**
+ * Field mesin penugasan. Mesin Claude tidak ditulis supaya task.json lama dan baru berbentuk sama;
+ * modelnya tetap dicatat kalau dipilih (form tugas, oper, atau Pengaturan → Bot).
+ */
 function engineFields(engine?: EngineId, model?: string): Pick<Assignment, "engine" | "model"> {
-  if (!engine || engine === "claude") return {};
-  return { engine, ...(model ? { model } : {}) };
+  return { ...(engine && engine !== "claude" ? { engine } : {}), ...(model ? { model } : {}) };
 }
 
 /** Mesin penugasan yang sedang berjalan. */
