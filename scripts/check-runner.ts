@@ -921,6 +921,24 @@ async function harness(
   const handed = addAssignment(chosen.id, "qa", undefined, "claude", "claude-oper");
   check("S11 model Claude pilihan oper tersimpan", handed?.assignments.at(-1)?.model === "claude-oper", handed?.assignments.at(-1));
   updateTask(chosen.id, { status: "cancelled" });
+
+  // Sesi yang transkripnya tidak ada di akun Claude app tidak di-resume.
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  mkdirSync(join(CONFIG.claudeDir, "projects", "-uji"), { recursive: true });
+  writeFileSync(join(CONFIG.claudeDir, "projects", "-uji", "sesi-ada.jsonl"), "{}\n");
+  const notices: StoredEvent[] = [];
+  const off = bus.subscribe(task.id, (event) => notices.push(event));
+  const kept = new TaskRunner(task.id, "engineer", hooks, "sesi-ada") as never as Record<string, any>;
+  kept.dropMissingSession();
+  const lost = new TaskRunner(task.id, "engineer", hooks, "sesi-hilang") as never as Record<string, any>;
+  lost.dropMissingSession();
+  off();
+  check("S12 sesi yang transkripnya ada tetap di-resume", kept.sessionId === "sesi-ada" && kept.options(sandbox).resume === "sesi-ada");
+  check(
+    "S13 sesi tanpa transkrip → sesi baru + catatan",
+    lost.sessionId === undefined && lost.options(sandbox).resume === undefined && notices.some((event) => event.type === "notice" && /sesi baru/.test(event.text)),
+    notices,
+  );
 }
 
 rmSync(sandbox, { recursive: true, force: true });

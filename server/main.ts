@@ -30,7 +30,6 @@ import { ensureDefaultProject, listProjects, loadProjects } from "./projects.ts"
 import { migrateProjects } from "../scripts/migrate-projects.ts";
 
 ensureDirs();
-initAccounts();
 registerEngines();
 // Urutan penting: migrasi membaca tugas lama, lalu project dimuat, lalu tugas yatim diadopsi.
 loadTasks();
@@ -39,6 +38,8 @@ loadProjects();
 loadTasks();
 ensureDefaultProject();
 const adopted = adoptOrphanTasks();
+// Setelah tugas dimuat: salinan transkrip sesi dari ~/.claude membaca penugasan tugas.
+initAccounts();
 const orphans = closeOrphanRequests();
 curator.watch();
 

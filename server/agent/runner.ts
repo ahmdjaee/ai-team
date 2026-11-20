@@ -9,7 +9,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { BrowserSession, closeBrowserFor, createBrowserServer } from "../browser/mcp.ts";
 import { control } from "../browser/control.ts";
-import { claudeEnv, isClaudeAuthError } from "../accounts/claude.ts";
+import { claudeEnv, claudeSessionExists, isClaudeAuthError } from "../accounts/claude.ts";
 import { markAccountExpired } from "../accounts/index.ts";
 import { CONFIG } from "../config.ts";
 import { effortFor, modelFor } from "../settings.ts";
@@ -317,11 +317,26 @@ export class TaskRunner implements AgentRunner {
     this.wake?.();
     // Workspace, izin, dan konteks semuanya mengikuti project tugas ini.
     const workspaceDir = workspaceForTask(this.taskId);
+    this.dropMissingSession();
     const instance = query({ prompt: this.input(), options: this.options(workspaceDir) });
     this.q = instance;
     this.queryDir = workspaceDir;
     this.echoSeen = false;
     void this.consume(instance);
+  }
+
+  /**
+   * Transkrip sesi harus ada di folder akun Claude app; kalau tidak (sesi dari login laptop yang
+   * tidak ikut tersalin), `resume` akan gagal. Mulai sesi baru: instruksi, ringkasan, dan konteks
+   * tugas tetap ada di system prompt.
+   */
+  private dropMissingSession(): void {
+    if (!this.sessionId || claudeSessionExists(this.sessionId)) return;
+    this.sessionId = undefined;
+    this.emit({
+      type: "notice",
+      text: "Riwayat sesi Claude sebelumnya tidak ada di akun Claude app — bot memulai sesi baru dengan konteks tugas ini.",
+    });
   }
 
   private options(workspaceDir: string): Options {
