@@ -23,6 +23,7 @@ import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { z } from "zod";
+import { onAccountsChanged } from "./accounts/index.ts";
 import { ASK_MODELS, askHub } from "./agent/ask.ts";
 import { bus } from "./agent/bus.ts";
 import { scheduler } from "./agent/scheduler.ts";
@@ -127,11 +128,16 @@ function globalTopic(emit: Emit): () => void {
   const offRemoved = onTaskRemoved(() => tasksChanged.trigger());
   // Browser bot mulai/berhenti tidak menulis task.json, tapi daftar tugas menampilkan "● live".
   const offLive = live.onActiveChange(() => tasksChanged.trigger());
+  // Kartu akun & dialog login di semua tab ikut berubah (login, Periksa, Keluar).
+  const accountsChanged = coalesce(() => emit({ type: "accounts_changed" }));
+  const offAccounts = onAccountsChanged(() => accountsChanged.trigger());
   return () => {
     offAttention();
     offTasks();
     offRemoved();
     offLive();
+    offAccounts();
+    accountsChanged.cancel();
     tasksChanged.cancel();
   };
 }

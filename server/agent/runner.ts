@@ -9,7 +9,9 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { BrowserSession, closeBrowserFor, createBrowserServer } from "../browser/mcp.ts";
 import { control } from "../browser/control.ts";
-import { CONFIG, agentEnv } from "../config.ts";
+import { claudeEnv, isClaudeAuthError } from "../accounts/claude.ts";
+import { markAccountExpired } from "../accounts/index.ts";
+import { CONFIG } from "../config.ts";
 import { contextBlock, workspaceForTask } from "../context.ts";
 import { ROLES, permissionsFor, resolvePermissionMode } from "../roles.ts";
 import { createTeamServer } from "../team/mcp.ts";
@@ -352,7 +354,7 @@ export class TaskRunner implements AgentRunner {
       includePartialMessages: true,
       canUseTool: this.handlePermission,
       resume: this.sessionId,
-      env: agentEnv(),
+      env: claudeEnv(),
     };
   }
 
@@ -371,6 +373,9 @@ export class TaskRunner implements AgentRunner {
           continue;
         }
         if (message.type === "assistant" && typeof message.user_message_uuid === "string") this.echoSeen = true;
+        if (message.type === "assistant" && message.error === "authentication_failed") {
+          markAccountExpired("claude", "Claude menolak login akun app (authentication_failed)");
+        }
         const meta = resultMeta(message);
         for (const event of toUiEvents(message)) {
           if (event.type === "init") {
@@ -396,6 +401,7 @@ export class TaskRunner implements AgentRunner {
       }
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
+      if (isClaudeAuthError(failure)) markAccountExpired("claude", `Claude Code: ${failure.slice(0, 200)}`);
     }
     if (this.q !== instance) {
       // Sesi lama berakhir setelah diganti: kartu sesi yang baru bukan miliknya.

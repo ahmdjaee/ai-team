@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 import { createSdkMcpServer, query, tool, type CanUseTool, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { notifyProject } from "../changes.ts";
-import { CONFIG, agentEnv } from "../config.ts";
+import { claudeEnv } from "../accounts/claude.ts";
+import { CONFIG } from "../config.ts";
 import {
   COVERAGE_STATES,
   FINDING_SEVERITIES,
@@ -353,7 +354,7 @@ function options(projectId: string, abort: AbortController): Options {
     maxTurns: MAX_TURNS,
     abortController: abort,
     persistSession: false,
-    env: agentEnv(),
+    env: claudeEnv(),
   };
 }
 

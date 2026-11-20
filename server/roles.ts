@@ -47,7 +47,9 @@ export const DENY_ALWAYS = [
   `Edit(${abs(`${CONFIG.tasksDir}/**/notes.md`)})`,
   // Mesin Antigravity: data & hooks.json milik AI Team, ~/.gemini pribadi, dan kode hook-nya.
   // Bot Claude yang menyunting salah satunya bisa mematikan pagar bot Gemini.
-  ...[CONFIG.antigravity.dir, PERSONAL_GEMINI_DIR].flatMap((dir) => [
+  // Akun AI milik app (token Claude, keyring Google) dan metadatanya.
+  `Read(${abs(`${CONFIG.dataDir}/accounts.json`)})`,
+  ...[...new Set([CONFIG.accountsDir, CONFIG.antigravity.dir, PERSONAL_GEMINI_DIR])].flatMap((dir) => [
     `Read(${abs(`${dir}/**`)})`,
     `Write(${abs(`${dir}/**`)})`,
     `Edit(${abs(`${dir}/**`)})`,

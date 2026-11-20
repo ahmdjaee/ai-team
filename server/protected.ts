@@ -4,8 +4,10 @@ import { fileURLToPath } from "node:url";
 import { CONFIG } from "./config.ts";
 
 /**
- * Folder yang menentukan pagar mesin Antigravity. Agen (mesin apa pun) tidak boleh membaca atau
- * menulisnya: yang membaca bisa menyusun perintah yang lolos pola, yang menulis bisa mematikan pagar.
+ * Folder yang tidak boleh dibaca atau ditulis agen (mesin apa pun):
+ * - akun AI milik app (`data/accounts`): token login Claude, keyring Google untuk Gemini;
+ * - pagar mesin Antigravity: yang membaca bisa menyusun perintah yang lolos pola, yang menulis bisa
+ *   mematikan pagar.
  */
 
 /** Kode hook PreToolUse `agy` — dijalankan agy di setiap tool call. */
@@ -19,12 +21,23 @@ function tail(path: string): string {
   return `${basename(dirname(path))}/${basename(path)}`;
 }
 
-/** Folder terlindung, path absolut. */
+/** Metadata akun (email, paket, daftar model) — bukan rahasia, tapi bukan urusan agen. */
+export const ACCOUNTS_FILE = join(CONFIG.dataDir, "accounts.json");
+
+/** Folder (dan berkas) terlindung, path absolut. */
 export function protectedDirs(): string[] {
-  return [CONFIG.antigravity.dir, PERSONAL_GEMINI_DIR, ANTIGRAVITY_CODE_DIR];
+  return [...new Set([CONFIG.accountsDir, CONFIG.antigravity.dir, ACCOUNTS_FILE, PERSONAL_GEMINI_DIR, ANTIGRAVITY_CODE_DIR])];
 }
 
 /** Untuk `classifyCommand`: path absolut plus ekor relatifnya. */
 export function protectedCommandPaths(): string[] {
-  return [...new Set([...protectedDirs(), tail(CONFIG.antigravity.dir), tail(ANTIGRAVITY_CODE_DIR)])];
+  return [
+    ...new Set([
+      ...protectedDirs(),
+      tail(CONFIG.accountsDir),
+      tail(ACCOUNTS_FILE),
+      tail(CONFIG.antigravity.dir),
+      tail(ANTIGRAVITY_CODE_DIR),
+    ]),
+  ];
 }

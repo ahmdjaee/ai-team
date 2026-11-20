@@ -28,6 +28,7 @@
     "check:diff": "bun scripts/check-diff.ts",
     "check:delete": "bun scripts/check-delete.ts",
     "check:acp": "bun scripts/check-acp.ts",
+    "check:accounts": "bun scripts/check-accounts.ts",
     "check:mcp-http": "bun scripts/check-mcp-http.ts",
     "fix:costs": "bun scripts/fix-costs.ts",
     "gate:suggest": "bun scripts/gates/suggest-collapse.ts",

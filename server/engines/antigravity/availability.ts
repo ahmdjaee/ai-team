@@ -3,6 +3,7 @@ import { accessSync, constants, mkdirSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import * as acp from "@agentclientprotocol/sdk";
 import { CONFIG, agentEnv } from "../../config.ts";
+import { geminiKeyringEnv } from "../../accounts/keyring.ts";
 import { spawnAgy } from "./process.ts";
 
 export type EngineModel = { id: string; name: string };
@@ -10,6 +11,8 @@ export type EngineModel = { id: string; name: string };
 export type AntigravityInfo = {
   available: boolean;
   reason?: string;
+  /** Gagal karena belum/tidak lagi login (bukan karena agy rusak atau jaringan). */
+  authFailed?: boolean;
   version?: string;
   models?: EngineModel[];
   defaultModel?: string;
@@ -58,8 +61,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 /**
- * Buka satu sesi kosong (tanpa prompt, jadi tanpa kuota model) untuk memastikan login masih berlaku
- * dan membaca daftar model akun ini.
+ * Buka satu sesi kosong (tanpa prompt, jadi tanpa kuota model) di keyring pribadi app untuk
+ * memastikan login akun Gemini app masih berlaku dan membaca daftar model akun ini.
  */
 async function probe(): Promise<AntigravityInfo> {
   const checkedAt = new Date().toISOString();
@@ -74,7 +77,13 @@ async function probe(): Promise<AntigravityInfo> {
     .client({ name: "ai-team-probe" })
     .onRequest(acp.methods.client.session.requestPermission, () => ({ outcome: { outcome: "cancelled" as const } }))
     .onNotification(acp.methods.client.session.update, () => undefined);
-  const proc = spawnAgy({ cwd, env: agentEnv(), app });
+  let keyring: Record<string, string>;
+  try {
+    keyring = await geminiKeyringEnv();
+  } catch (error) {
+    return { available: false, version: found, reason: `keyring pribadi tidak bisa dimulai: ${(error as Error).message}`, checkedAt };
+  }
+  const proc = spawnAgy({ cwd, env: { ...agentEnv(), ...keyring }, app });
   try {
     const agent = proc.connection.agent;
     await withTimeout(
@@ -104,13 +113,12 @@ async function probe(): Promise<AntigravityInfo> {
     };
   } catch (error) {
     const message = (error as Error).message;
-    const auth = /auth|login|sign.?in|credential|unauthori/i.test(`${message} ${proc.stderrTail()}`);
+    const auth = isAgyAuthError(`${message} ${proc.stderrTail()}`);
     return {
       available: false,
+      authFailed: auth,
       version: found,
-      reason: auth
-        ? "agy belum login — jalankan `agy` sekali di terminal dan masuk dengan akun Google"
-        : `agy acp gagal: ${message}`,
+      reason: auth ? "akun Gemini app belum login atau loginnya sudah tidak berlaku" : `agy acp gagal: ${message}`,
       checkedAt,
     };
   } finally {
@@ -131,8 +139,12 @@ export function antigravityInfo(force = false): Promise<AntigravityInfo> {
   return inflight;
 }
 
-/** Cek cepat untuk route: hasil probe terakhir kalau ada, kalau belum cukup biner agy-nya. */
-export function antigravityUsable(): { ok: boolean; reason?: string } {
-  if (cache) return cache.info.available ? { ok: true } : { ok: false, reason: cache.info.reason };
-  return findAgy() ? { ok: true } : { ok: false, reason: `perintah \`${CONFIG.antigravity.bin}\` tidak ditemukan` };
+/** Galat agy yang berarti login akun Gemini app tidak (lagi) berlaku. */
+export function isAgyAuthError(text: string): boolean {
+  return /auth|login|sign.?in|credential|unauthori/i.test(text);
+}
+
+/** Lupakan hasil probe (setelah login/logout akun Gemini app). */
+export function resetAntigravityCache(): void {
+  cache = undefined;
 }

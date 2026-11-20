@@ -22,9 +22,10 @@ export type PolicyContext = {
   /** `false` menolak `git commit` karena pemilik belum memintanya; `undefined` melewati gerbang ini. */
   commitRequested?: boolean;
   /**
-   * Folder yang tidak boleh disentuh perintah apa pun (dibaca, ditulis, atau disebut): data agy milik
-   * AI Team, ~/.gemini pribadi, dan kode hook Antigravity. Isinya menentukan pagar mesin Antigravity,
-   * jadi agen yang membacanya bisa menyusun perintah yang lolos, dan yang menulisnya bisa mematikannya.
+   * Folder yang tidak boleh disentuh perintah apa pun (dibaca, ditulis, atau disebut): akun AI milik
+   * app, data agy milik AI Team, ~/.gemini pribadi, dan kode hook Antigravity. Akun berisi token;
+   * sisanya menentukan pagar mesin Antigravity, jadi agen yang membacanya bisa menyusun perintah
+   * yang lolos, dan yang menulisnya bisa mematikannya.
    */
   protectedPaths?: string[];
 };
@@ -51,6 +52,12 @@ const DENY: Rule[] = [
   { test: />\s*\/dev\/(sd|nvme|hd|vd)\w/, reason: "menimpa perangkat disk" },
   // Data dan login Antigravity pribadi pemilik, setara ~/.claude.
   { test: /(?:~|\$\{?HOME\}?)\/\.gemini(?=[\/\s'"`;&|)]|$)/, reason: "menyentuh folder ~/.gemini milik pemilik" },
+  // Akun AI milik app: folder login Claude, token, keyring Google, dan perintah login/logout.
+  { test: /\bCLAUDE_CONFIG_DIR\b/, reason: "menyentuh folder login Claude milik app" },
+  { test: /\.credentials\.json\b/, reason: "menyentuh berkas kredensial Claude" },
+  { test: /\bclaude\s+(?:auth|setup-token)\b/, reason: "mengubah atau membaca login Claude" },
+  { test: /\bagy\b[^;&|\n]*\s--?(?:login|logout)\b/, reason: "mengubah login Antigravity" },
+  { test: /\b(?:secret-tool|gnome-keyring-daemon|gdbus|dbus-send|busctl|qdbus)\b/, reason: "menyentuh keyring atau D-Bus" },
 ];
 
 /** Tetap memunculkan kartu persetujuan, walau mode auto. */

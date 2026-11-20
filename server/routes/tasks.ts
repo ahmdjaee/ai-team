@@ -108,7 +108,7 @@ tasksRouter.post("/tasks", (req, res) => {
   const { engine, model } = resolveEngine(role, choice.engine, choice.model);
   const usable = engineUsable(engine);
   if (!usable.ok) {
-    res.status(400).json({ error: `${ENGINE_LABEL[engine]} belum bisa dipakai: ${usable.reason}` });
+    res.status(409).json({ error: `${ENGINE_LABEL[engine]} belum bisa dipakai: ${usable.reason}` });
     return;
   }
 
@@ -265,10 +265,17 @@ tasksRouter.post("/tasks/:id/message", (req, res) => {
     res.status(400).json({ error: "text wajib diisi" });
     return;
   }
-  if (!scheduler.send(req.params.id, text)) {
+  const task = getTask(req.params.id);
+  if (!task) {
     res.status(404).json({ error: "tugas tidak ditemukan" });
     return;
   }
+  const blocked = scheduler.blockedReason(task);
+  if (blocked) {
+    res.status(409).json({ error: `Pesan belum bisa dikirim: ${blocked}` });
+    return;
+  }
+  scheduler.send(task.id, text);
   res.json({ ok: true });
 });
 
@@ -320,7 +327,7 @@ tasksRouter.post("/tasks/:id/handoff", async (req, res) => {
   const resolved = resolveEngine(role, choice.engine, choice.model);
   const usable = engineUsable(resolved.engine);
   if (!usable.ok) {
-    res.status(400).json({ error: `${ENGINE_LABEL[resolved.engine]} belum bisa dipakai: ${usable.reason}` });
+    res.status(409).json({ error: `${ENGINE_LABEL[resolved.engine]} belum bisa dipakai: ${usable.reason}` });
     return;
   }
   const task = await scheduler.handoff(req.params.id, role, note, resolved);
@@ -343,6 +350,11 @@ tasksRouter.post("/tasks/:id/review", (req, res) => {
 
   if (status === "changes_requested" && !comment) {
     res.status(400).json({ error: "komentar wajib diisi kalau meminta perbaikan" });
+    return;
+  }
+  const blocked = status === "changes_requested" && sendBack ? scheduler.blockedReason(task) : undefined;
+  if (blocked) {
+    res.status(409).json({ error: `Review belum bisa dikirim ke bot: ${blocked}` });
     return;
   }
 

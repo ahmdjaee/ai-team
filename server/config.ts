@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { EFFORTS, type Effort } from "./types.ts";
 
 try {
   process.loadEnvFile(join(process.cwd(), ".env"));
@@ -16,9 +17,6 @@ function num(name: string, fallback: number): number {
   const v = Number(process.env[name]);
   return Number.isFinite(v) && v > 0 ? v : fallback;
 }
-
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
-type Effort = (typeof EFFORTS)[number];
 
 function effort(name: string, fallback: Effort): Effort {
   const value = process.env[name];
@@ -69,14 +67,21 @@ export const CONFIG = {
   /** Origin tambahan yang boleh memanggil API dan WebSocket (dipisah koma), mis. https://ai-team.example. */
   allowedOrigins: str("ALLOWED_ORIGINS", ""),
   targetUrl: str("TARGET_URL", ""),
+  /**
+   * Akun yang login di dalam app. Tiap penyedia punya foldernya sendiri: kredensial, transkrip,
+   * dan setelan CLI milik app — terpisah dari `claude`/`agy` yang dipakai pemilik di terminal.
+   */
+  accountsDir: join(dataDir, "accounts"),
+  /** `CLAUDE_CONFIG_DIR` untuk semua proses Claude milik app. */
+  claudeDir: join(dataDir, "accounts", "claude"),
   antigravity: {
     /** Perintah Antigravity CLI (`agy`). */
     bin: str("AGY_BIN", "agy"),
     /**
-     * Folder data agy milik AI Team (`--gemini-dir`): percakapan, config, dan hooks.json bot ada di
-     * sini, terpisah dari ~/.gemini pribadi. Login tetap dari keyring OS (akun Google yang sama).
+     * Folder data agy milik AI Team (`--gemini-dir`): percakapan, config, hooks.json, dan keyring
+     * pribadi berisi login Google akun Gemini app — terpisah dari ~/.gemini dan keyring desktop.
      */
-    dir: resolve(str("AGY_DIR", join(dataDir, "antigravity"))),
+    dir: resolve(str("AGY_DIR", join(dataDir, "accounts", "gemini"))),
     /** Batas tunggu hook PreToolUse — termasuk kartu persetujuan yang menunggu owner. */
     hookTimeoutSec: num("AGY_HOOK_TIMEOUT_SEC", 6 * 60 * 60),
     /** Update agy tanpa prompt kita dianggap satu turn latar yang selesai setelah sepi selama ini. */
@@ -85,12 +90,19 @@ export const CONFIG = {
 } as const;
 
 /**
- * Environment untuk subprocess Claude Code.
- * ANTHROPIC_API_KEY sengaja dihapus supaya SDK memakai sesi login OAuth
- * yang sudah ada di ~/.claude, bukan jalur API key.
+ * Environment dasar untuk subprocess agen. API key sengaja dihapus: app hanya memakai akun yang
+ * login di dalam app. Proses Claude memakai `claudeEnv()` (`server/accounts/env.ts`), yang
+ * menambahkan `CLAUDE_CONFIG_DIR` milik app.
  */
 export function agentEnv(): Record<string, string | undefined> {
-  return { ...process.env, ANTHROPIC_API_KEY: undefined, ANTHROPIC_AUTH_TOKEN: undefined };
+  return {
+    ...process.env,
+    ANTHROPIC_API_KEY: undefined,
+    ANTHROPIC_AUTH_TOKEN: undefined,
+    CLAUDE_CODE_OAUTH_TOKEN: undefined,
+    GEMINI_API_KEY: undefined,
+    GOOGLE_API_KEY: undefined,
+  };
 }
 
 export function ensureDirs(): void {

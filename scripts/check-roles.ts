@@ -36,6 +36,12 @@ for (const role of ["qa", "engineer", "devops", "uiux"] as RoleId[]) {
     deny.includes(`Read(/${PERSONAL_GEMINI_DIR}/**)`) &&
     deny.includes(`Edit(/${ANTIGRAVITY_CODE_DIR}/**)`);
   expect(`${role}: data & kode pagar Antigravity diblokir`, guarded, true);
+  const accounts =
+    deny.includes(`Read(/${CONFIG.accountsDir}/**)`) &&
+    deny.includes(`Write(/${CONFIG.accountsDir}/**)`) &&
+    deny.includes(`Edit(/${CONFIG.accountsDir}/**)`) &&
+    deny.includes(`Read(/${CONFIG.dataDir}/accounts.json)`);
+  expect(`${role}: akun AI milik app diblokir`, accounts, true);
 }
 expect("mode ask memakai acceptEdits untuk report.md", resolvePermissionMode(uiux, "ask"), "acceptEdits");
 expect("mode readonly memakai plan", resolvePermissionMode(uiux, "readonly"), "plan");

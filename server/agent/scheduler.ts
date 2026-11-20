@@ -1,3 +1,4 @@
+import { engineUsable } from "../accounts/index.ts";
 import { control } from "../browser/control.ts";
 import { closeBrowserFor } from "../browser/mcp.ts";
 import { CONFIG } from "../config.ts";
@@ -222,6 +223,15 @@ class Scheduler {
 
   // ---------- perintah ----------
 
+  /**
+   * Alasan tugas ini tidak bisa dijalankan sekarang: akun penyedia mesinnya belum ada di app atau
+   * perlu login ulang. Route menolak permintaan dengan alasan ini (409) sebelum memanggil perintah.
+   */
+  blockedReason(task: Task): string | undefined {
+    const usable = engineUsable(engineOf(currentAssignment(task)));
+    return usable.ok ? undefined : usable.reason;
+  }
+
   /** Tugas baru: kirim pesan pembuka dan biarkan antrean yang mengatur gilirannya. */
   start(task: Task): void {
     this.runnerFor(task).send(composeOpeningMessage(task), {
@@ -333,11 +343,24 @@ class Scheduler {
     });
   }
 
-  /** Setelah server dimulai ulang: lanjutkan tugas yang sempat berjalan. */
+  /**
+   * Setelah server dimulai ulang: lanjutkan tugas yang sempat berjalan. Tugas yang akun mesinnya
+   * belum siap tidak dijalankan: statusnya jadi "perlu review" dengan catatan, dan pemilik cukup
+   * mengirim pesan setelah akunnya ditambahkan untuk melanjutkan.
+   */
   resumePending(): number {
     let resumed = 0;
     for (const task of activeTasks()) {
       const assignment = currentAssignment(task);
+      const blocked = this.blockedReason(task);
+      if (blocked) {
+        updateTask(task.id, { status: "needs_review" });
+        bus.emit(task.id, task.role, {
+          type: "notice",
+          text: `Tugas tidak dilanjutkan setelah server dimulai ulang: ${blocked}. Kirim pesan untuk melanjutkan setelah akunnya siap.`,
+        });
+        continue;
+      }
       updateTask(task.id, { status: "queued" });
       const fresh = getTask(task.id);
       if (!fresh) continue;

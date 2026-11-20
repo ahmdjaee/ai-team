@@ -5,7 +5,8 @@ import {
   type Query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { CONFIG, agentEnv } from "../config.ts";
+import { claudeEnv } from "../accounts/claude.ts";
+import { CONFIG } from "../config.ts";
 import { askContext, workspaceForTask } from "../context.ts";
 import { DENY_ALWAYS } from "../roles.ts";
 import { addAskCost, getTask, taskDir } from "../tasks.ts";
@@ -73,7 +74,7 @@ export function askOptions(taskId: string, model: string, history: AskMessage[])
     includePartialMessages: true,
     // Inti "incognito": tidak ada transcript yang ditulis ke ~/.claude.
     persistSession: false,
-    env: agentEnv(),
+    env: claudeEnv(),
   };
 }
 

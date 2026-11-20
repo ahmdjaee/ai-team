@@ -281,6 +281,7 @@ async function harness(options: { role?: RoleId; mode?: AutonomyMode; model?: st
     options.mode ?? "ask",
     options.model,
     fake.launcher,
+    async () => ({ ...process.env }),
   );
   const of = <T extends StoredEvent["type"]>(type: T) => events.filter((event) => event.type === type) as Array<Extract<StoredEvent, { type: T }>>;
   const done = (count: number) => until(() => outcomes.length >= count);
@@ -451,6 +452,21 @@ const workspace = CONFIG.workspaceDir;
     commandVerdict: () => ({ decision: "pass", message: "" }),
   });
   check("C14 symlink ke data agy tetap ditolak", verdict.decision === "deny", verdict);
+  for (const [label, path] of [
+    ["token Claude app", join(CONFIG.accountsDir, "claude", ".credentials.json")],
+    ["metadata akun", join(CONFIG.dataDir, "accounts.json")],
+  ] as const) {
+    const account = decideTool({
+      role: "qa",
+      mode: "auto",
+      name: "read_file",
+      args: { Path: path },
+      workspaceDir: workspace,
+      taskDir: join(CONFIG.tasksDir, "T-x"),
+      commandVerdict: () => ({ decision: "pass", message: "" }),
+    });
+    check(`C14c ${label} tidak bisa dibaca bot Gemini`, account.decision === "deny", account);
+  }
   const tilde = decideTool({
     role: "engineer",
     mode: "auto",

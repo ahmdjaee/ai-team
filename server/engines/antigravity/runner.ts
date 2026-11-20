@@ -1,7 +1,9 @@
 import * as acp from "@agentclientprotocol/sdk";
 import { BrowserSession, closeBrowserFor, createBrowserServer } from "../../browser/mcp.ts";
 import { control } from "../../browser/control.ts";
-import { CONFIG, agentEnv } from "../../config.ts";
+import { geminiEnv } from "../../accounts/gemini.ts";
+import { markAccountExpired } from "../../accounts/index.ts";
+import { CONFIG } from "../../config.ts";
 import { contextBlock, workspaceForTask } from "../../context.ts";
 import { localBaseUrl, registerMcpEndpoint, type McpEndpoint } from "../../mcp-http.ts";
 import { ROLES } from "../../roles.ts";
@@ -14,6 +16,7 @@ import type { AgentRunner } from "../../agent/runner-api.ts";
 import type { ApprovalDecision, RunnerHooks } from "../../agent/runner.ts";
 import { AcpEventMapper } from "./events.ts";
 import { HOOK_PATH, registerHookHandler, type HookAnswer, type HookPayload } from "./hooks.ts";
+import { isAgyAuthError } from "./availability.ts";
 import { decideTool } from "./permissions.ts";
 import { spawnAgy, type AgyProcess, type Launcher } from "./process.ts";
 import { toAskQuestions, uiTool } from "./tools.ts";
@@ -132,6 +135,8 @@ export class AcpTaskRunner implements AgentRunner {
     private mode: AutonomyMode = "ask",
     private readonly model?: string,
     private readonly launch: Launcher = spawnAgy,
+    /** Env akun Gemini app (keyring pribadi); uji memakai env kosong. */
+    private readonly accountEnv: () => Promise<Record<string, string | undefined>> = geminiEnv,
   ) {
     this.sessionId = sessionId;
     this.mapper = new AcpEventMapper((event) => this.emit(event), {
@@ -372,8 +377,17 @@ export class AcpTaskRunner implements AgentRunner {
     if (this.proc) await this.stopProcess();
     const cwd = workspaceForTask(this.taskId);
     const mcp = registerMcpEndpoint(this.mcpFactories());
+    let keyring: Record<string, string | undefined>;
+    try {
+      keyring = await this.accountEnv();
+    } catch (error) {
+      await mcp.revoke();
+      this.emit({ type: "error", message: `Keyring akun Gemini tidak bisa dimulai: ${(error as Error).message}` });
+      this.setStatus("error");
+      return false;
+    }
     const env = {
-      ...agentEnv(),
+      ...keyring,
       AI_TEAM_HOOK_URL: `${localBaseUrl()}${HOOK_PATH}`,
       AI_TEAM_HOOK_TOKEN: this.hook.token,
     };
@@ -448,6 +462,9 @@ export class AcpTaskRunner implements AgentRunner {
     } catch (error) {
       if (this.proc === proc) {
         const stderr = proc.stderrTail();
+        if (isAgyAuthError(`${(error as Error).message} ${stderr}`)) {
+          markAccountExpired("gemini", "Antigravity menolak login akun Gemini app saat memulai sesi");
+        }
         this.emit({
           type: "error",
           message: `Antigravity gagal memulai sesi: ${(error as Error).message}${stderr ? `\n${stderr.slice(-600)}` : ""}`,

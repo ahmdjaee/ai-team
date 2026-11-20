@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
+import { initAccounts } from "./accounts/index.ts";
+import { stopGeminiKeyring } from "./accounts/keyring.ts";
 import { askHub } from "./agent/ask.ts";
 import { curator } from "./agent/curator.ts";
 import { scheduler } from "./agent/scheduler.ts";
@@ -12,6 +14,7 @@ import { enginesRouter, registerEngines } from "./engines/index.ts";
 import { agyHookRouter } from "./engines/antigravity/hooks.ts";
 import { attachRealtime } from "./realtime.ts";
 import { closeOrphanRequests } from "./recover.ts";
+import { accountsRouter } from "./routes/accounts.ts";
 import { approvalsRouter } from "./routes/approvals.ts";
 import { askRouter } from "./routes/ask.ts";
 import { healthRouter } from "./routes/health.ts";
@@ -26,6 +29,7 @@ import { ensureDefaultProject, listProjects, loadProjects } from "./projects.ts"
 import { migrateProjects } from "../scripts/migrate-projects.ts";
 
 ensureDirs();
+initAccounts();
 registerEngines();
 // Urutan penting: migrasi membaca tugas lama, lalu project dimuat, lalu tugas yatim diadopsi.
 loadTasks();
@@ -43,7 +47,7 @@ const app = express();
 // Pagar Host/Origin dulu: permintaan dari situs lain tidak boleh sampai membaca body sekalipun.
 app.use("/api", httpGuard);
 app.use(express.json({ limit: "20mb" }));
-app.use("/api", tasksRouter, askRouter, projectsRouter, approvalsRouter, memoryRouter, settingsRouter, workspaceRouter, healthRouter);
+app.use("/api", tasksRouter, askRouter, projectsRouter, approvalsRouter, memoryRouter, settingsRouter, workspaceRouter, healthRouter, accountsRouter);
 // Jalur internal untuk mesin Antigravity: server MCP lewat HTTP dan hook PreToolUse `agy`.
 app.use("/api", enginesRouter, mcpRouter, agyHookRouter);
 
@@ -91,6 +95,7 @@ async function shutdown(signal: string): Promise<void> {
   askHub.closeAll();
   curator.closeAll();
   await scheduler.closeAll();
+  await stopGeminiKeyring();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3_000).unref();
 }
