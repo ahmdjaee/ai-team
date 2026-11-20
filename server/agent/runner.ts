@@ -12,6 +12,7 @@ import { control } from "../browser/control.ts";
 import { claudeEnv, isClaudeAuthError } from "../accounts/claude.ts";
 import { markAccountExpired } from "../accounts/index.ts";
 import { CONFIG } from "../config.ts";
+import { effortFor, modelFor } from "../settings.ts";
 import { contextBlock, workspaceForTask } from "../context.ts";
 import { ROLES, permissionsFor, resolvePermissionMode } from "../roles.ts";
 import { createTeamServer } from "../team/mcp.ts";
@@ -158,6 +159,8 @@ export class TaskRunner implements AgentRunner {
     private readonly hooks: RunnerHooks,
     sessionId?: string,
     private mode: AutonomyMode = "ask",
+    /** Model pilihan penugasan; kosong = Pengaturan, lalu `.env`. */
+    private readonly model?: string,
   ) {
     this.sessionId = sessionId;
   }
@@ -337,8 +340,8 @@ export class TaskRunner implements AgentRunner {
         preset: "claude_code",
         append: `${role.persona}${contextBlock(this.taskId)}`,
       },
-      model: role.model,
-      effort: role.effort,
+      model: modelFor(this.role, "claude", this.model),
+      effort: effortFor(this.role),
       cwd: workspaceDir,
       additionalDirectories: [CONFIG.tasksDir],
       settingSources: CONFIG.includeUserSettings ? ["user", "project"] : ["project"],

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONFIG } from "./config.ts";
-import { ENGINE_IDS, type AutonomyMode, type EngineId, type RoleId } from "./types.ts";
+import { ENGINE_IDS, isEffort, type AutonomyMode, type Effort, type EngineId, type RoleId } from "./types.ts";
 
 export type NotificationSettings = {
   approval: boolean;
@@ -12,20 +12,38 @@ export type NotificationSettings = {
   onlyWhenHidden: boolean;
 };
 
+/** Bot plus kurator memori: semua yang punya model dan tingkat penalaran sendiri. */
+export type ModelKey = RoleId | "curator";
+
 export type Settings = {
   modes: Record<RoleId, AutonomyMode>;
   /** Mesin bawaan tiap bot untuk tugas dan operan baru; penugasan yang sudah jalan tidak ikut berubah. */
   engines: Record<RoleId, EngineId>;
   /** Model Antigravity per bot (id dari daftar model `agy`); kosong = model bawaan agy. */
   geminiModels: Partial<Record<RoleId, string>>;
+  /** Model Claude per bot dan kurator (id dari daftar model akun); kosong = `MODEL_*` di `.env`. */
+  claudeModels: Partial<Record<ModelKey, string>>;
+  /** Tingkat penalaran per bot dan kurator; kosong = `EFFORT_*` di `.env`. */
+  efforts: Partial<Record<ModelKey, Effort>>;
   notifications: NotificationSettings;
 };
+
+/** Nilai `.env` yang berlaku kalau Pengaturan kosong, untuk label "Bawaan" di UI. */
+export type ModelDefaults = { claudeModels: Record<ModelKey, string>; efforts: Record<ModelKey, Effort> };
 
 const PATH = join(CONFIG.dataDir, "settings.json");
 const MODES: AutonomyMode[] = ["auto", "ask", "readonly"];
 const ROLE_KEYS: RoleId[] = ["qa", "engineer", "devops", "uiux"];
-/** Id model agy: huruf, angka, titik, dan tanda hubung saja (mis. `gemini-3.8-flash`). */
-const MODEL_ID = /^[a-z0-9][a-z0-9.-]{0,79}$/i;
+const MODEL_KEYS: ModelKey[] = [...ROLE_KEYS, "curator"];
+/**
+ * Id model: huruf, angka, titik, tanda hubung, garis bawah, dan kurung siku (mis.
+ * `gemini-3.8-flash`, `claude-opus-5-5`, `sonnet[1m]`). Tidak ada spasi atau karakter shell.
+ */
+const MODEL_ID = /^[a-z0-9][a-z0-9._\-[\]]{0,79}$/i;
+
+export function validModelId(value: unknown): value is string {
+  return typeof value === "string" && MODEL_ID.test(value);
+}
 
 /** `.env` hanya dipakai sebagai nilai awal; setelah itu Pengaturan di aplikasi yang berlaku. */
 function envMode(name: string): AutonomyMode {
@@ -43,6 +61,8 @@ function defaults(): Settings {
     },
     engines: { qa: "claude", engineer: "claude", devops: "claude", uiux: "claude" },
     geminiModels: {},
+    claudeModels: {},
+    efforts: {},
     notifications: { approval: true, question: true, needsReview: true, failed: true, onlyWhenHidden: true },
   };
 }
@@ -58,7 +78,20 @@ function sanitize(settings: Settings): Settings {
   for (const key of Object.keys(settings.geminiModels)) {
     if (!ROLE_KEYS.includes(key as RoleId)) delete settings.geminiModels[key as RoleId];
   }
+  for (const key of Object.keys(settings.claudeModels)) {
+    if (!MODEL_KEYS.includes(key as ModelKey) || !validModelId(settings.claudeModels[key as ModelKey])) {
+      delete settings.claudeModels[key as ModelKey];
+    }
+  }
+  for (const key of Object.keys(settings.efforts)) {
+    if (!MODEL_KEYS.includes(key as ModelKey) || !isEffort(settings.efforts[key as ModelKey])) delete settings.efforts[key as ModelKey];
+  }
   return settings;
+}
+
+/** Salinan objek peta dari JSON: abaikan yang bukan objek biasa. */
+function record<T>(value: unknown): Partial<Record<string, T>> {
+  return value && typeof value === "object" && !Array.isArray(value) ? { ...(value as Record<string, T>) } : {};
 }
 
 let cache: Settings | undefined;
@@ -72,7 +105,9 @@ export function getSettings(): Settings {
       cache = sanitize({
         modes: { ...base.modes, ...(stored.modes ?? {}) },
         engines: { ...base.engines, ...(stored.engines ?? {}) },
-        geminiModels: { ...(stored.geminiModels ?? {}) },
+        geminiModels: record<string>(stored.geminiModels),
+        claudeModels: record<string>(stored.claudeModels),
+        efforts: record<Effort>(stored.efforts),
         notifications: { ...base.notifications, ...(stored.notifications ?? {}) },
       });
       return cache;
@@ -84,22 +119,30 @@ export function getSettings(): Settings {
   return cache;
 }
 
-export type SettingsPatch = Partial<Omit<Settings, "geminiModels">> & {
+export type SettingsPatch = Partial<Omit<Settings, "geminiModels" | "claudeModels" | "efforts">> & {
   geminiModels?: Partial<Record<RoleId, string | null>>;
+  claudeModels?: Partial<Record<ModelKey, string | null>>;
+  efforts?: Partial<Record<ModelKey, Effort | null>>;
 };
+
+/** Terapkan patch peta: `null`/"" = hapus kunci itu (kembali ke bawaan); nilai tidak sah diabaikan. */
+function merge<T>(current: Partial<Record<string, T>>, patch: unknown, valid: (value: unknown) => boolean): Partial<Record<string, T>> {
+  const next = { ...current };
+  for (const [key, value] of Object.entries(record<T | null | "">(patch))) {
+    if (value === null || value === "" || value === undefined) delete next[key];
+    else if (valid(value)) next[key] = value as T;
+  }
+  return next;
+}
 
 export function updateSettings(patch: SettingsPatch): Settings {
   const current = getSettings();
-  const geminiModels = { ...current.geminiModels };
-  // `null`/"" di patch = kembali ke model bawaan agy.
-  for (const [role, model] of Object.entries(patch.geminiModels ?? {})) {
-    if (model === null || model === "") delete geminiModels[role as RoleId];
-    else geminiModels[role as RoleId] = model;
-  }
   const next = sanitize({
     modes: { ...current.modes, ...(patch.modes ?? {}) },
     engines: { ...current.engines, ...(patch.engines ?? {}) },
-    geminiModels,
+    geminiModels: merge(current.geminiModels, patch.geminiModels, validModelId),
+    claudeModels: merge(current.claudeModels, patch.claudeModels, validModelId),
+    efforts: merge(current.efforts, patch.efforts, isEffort),
     notifications: { ...current.notifications, ...(patch.notifications ?? {}) },
   });
   const tmp = `${PATH}.tmp`;
@@ -119,4 +162,28 @@ export function defaultEngineFor(role: RoleId): EngineId {
 
 export function geminiModelFor(role: RoleId): string | undefined {
   return getSettings().geminiModels[role];
+}
+
+/** Pilihan model di Pengaturan untuk mesin ini, tanpa jatuh ke `.env`; undefined = bawaan. */
+export function modelSetting(key: ModelKey, engine: EngineId): string | undefined {
+  if (engine === "claude") return getSettings().claudeModels[key];
+  return key === "curator" ? undefined : getSettings().geminiModels[key];
+}
+
+/**
+ * Model yang benar-benar dipakai: pilihan per penugasan, lalu Pengaturan, lalu `.env` (Claude).
+ * Untuk Gemini undefined berarti model bawaan akun agy.
+ */
+export function modelFor(key: ModelKey, engine: EngineId, override?: string): string | undefined {
+  if (override) return override;
+  return modelSetting(key, engine) ?? (engine === "claude" ? CONFIG.models[key] : undefined);
+}
+
+/** Tingkat penalaran: Pengaturan, lalu `.env`. */
+export function effortFor(key: ModelKey): Effort {
+  return getSettings().efforts[key] ?? CONFIG.effort[key];
+}
+
+export function modelDefaults(): ModelDefaults {
+  return { claudeModels: { ...CONFIG.models }, efforts: { ...CONFIG.effort } };
 }

@@ -1,3 +1,4 @@
+import { engineUsable } from "../accounts/index.ts";
 import { Router } from "express";
 import {
   createProject,
@@ -201,6 +202,11 @@ projectsRouter.post("/projects/:id/curate", (req, res) => {
   const project = getProject(req.params.id);
   if (!project) {
     res.status(404).json({ error: "project tidak ditemukan" });
+    return;
+  }
+  const usable = engineUsable("claude");
+  if (!usable.ok) {
+    res.status(409).json({ error: `Kurator butuh akun Claude: ${usable.reason}` });
     return;
   }
   void curator.run(project.id, true);

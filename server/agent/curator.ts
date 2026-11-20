@@ -14,7 +14,9 @@ import { createSdkMcpServer, query, tool, type CanUseTool, type Options } from "
 import { z } from "zod";
 import { notifyProject } from "../changes.ts";
 import { claudeEnv } from "../accounts/claude.ts";
+import { engineUsable } from "../accounts/index.ts";
 import { CONFIG } from "../config.ts";
+import { effortFor, modelFor } from "../settings.ts";
 import {
   COVERAGE_STATES,
   FINDING_SEVERITIES,
@@ -340,8 +342,8 @@ function options(projectId: string, abort: AbortController): Options {
   const denied = ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Task", "TodoWrite"];
   return {
     systemPrompt: { type: "preset", preset: "claude_code", append: PERSONA },
-    model: CONFIG.models.curator,
-    effort: CONFIG.effort.curator,
+    model: modelFor("curator", "claude"),
+    effort: effortFor("curator"),
     cwd: workspaceForProject(projectId),
     additionalDirectories: [CONFIG.tasksDir, projectDir(projectId)],
     settingSources: [],
@@ -425,6 +427,14 @@ class Curator {
   /** Jalankan sekarang. Kalau sedang berjalan, satu putaran tambahan dijadwalkan sesudahnya. */
   async run(projectId: string, force = false): Promise<void> {
     if (!getProject(projectId)) return;
+    // Kurator berjalan di Claude. Tanpa akun Claude yang siap, putaran dilewati; sumbernya tetap
+    // tertunda dan diproses saat kurator berjalan lagi setelah akunnya ditambahkan.
+    const usable = engineUsable("claude");
+    if (!usable.ok) {
+      this.errors.set(projectId, `Kurator butuh akun Claude: ${usable.reason}`);
+      notifyProject(projectId);
+      return;
+    }
     if (this.running.has(projectId)) {
       this.again.add(projectId);
       return;

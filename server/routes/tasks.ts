@@ -32,7 +32,7 @@ import {
   type TaskStatus,
 } from "../tasks.ts";
 import { isEngineId, type AutonomyMode, type EngineId } from "../types.ts";
-import { defaultModeFor } from "../settings.ts";
+import { defaultEngineFor, defaultModeFor, effortFor, modelFor, validModelId } from "../settings.ts";
 
 export const tasksRouter = Router();
 
@@ -51,7 +51,9 @@ tasksRouter.get("/roles", (_req, res) => {
       id,
       title: ROLES[id].title,
       blurb: ROLES[id].blurb,
-      model: ROLES[id].model,
+      model: modelFor(id, "claude"),
+      effort: effortFor(id),
+      engine: defaultEngineFor(id),
       producesReport: ROLES[id].producesReport,
       usesBrowser: ROLES[id].usesBrowser,
     })),
@@ -75,7 +77,7 @@ function engineChoice(body: unknown): { engine?: EngineId; model?: string; error
   if (raw.engine !== undefined && raw.engine !== null && raw.engine !== "" && !isEngineId(raw.engine)) {
     return { error: "mesin tidak dikenal" };
   }
-  const model = typeof raw.model === "string" && /^[a-z0-9][a-z0-9.-]{0,79}$/i.test(raw.model.trim()) ? raw.model.trim() : undefined;
+  const model = typeof raw.model === "string" && validModelId(raw.model.trim()) ? raw.model.trim() : undefined;
   return { engine: isEngineId(raw.engine) ? raw.engine : undefined, model };
 }
 

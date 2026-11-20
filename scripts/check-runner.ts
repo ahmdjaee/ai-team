@@ -875,6 +875,47 @@ async function harness(
   session.close();
 }
 
+// ---------- S. model & penalaran Claude: penugasan → Pengaturan → .env ----------
+{
+  const { CONFIG } = await import("../server/config.ts");
+  const { updateSettings } = await import("../server/settings.ts");
+  const { resolveEngine } = await import("../server/agent/scheduler.ts");
+  const task = newTask();
+  const hooks = {
+    acquire: async () => () => undefined,
+    onStatus: () => undefined,
+    onSession: () => undefined,
+    onTurnEnd: () => undefined,
+    onIdleShutdown: () => undefined,
+    onContext: () => undefined,
+  };
+  const optionsOf = (model?: string) =>
+    (new TaskRunner(task.id, "engineer", hooks, undefined, "ask", model) as never as Record<string, any>).options(sandbox) as {
+      model?: string;
+      effort?: string;
+      env?: Record<string, string | undefined>;
+    };
+
+  const plain = optionsOf();
+  check("S1 tanpa pilihan: model & penalaran dari .env", plain.model === CONFIG.models.engineer && plain.effort === CONFIG.effort.engineer, plain);
+  check("S2 proses Claude memakai folder akun app", plain.env?.CLAUDE_CONFIG_DIR === CONFIG.claudeDir, plain.env?.CLAUDE_CONFIG_DIR);
+
+  updateSettings({ claudeModels: { engineer: "claude-uji-pengaturan" }, efforts: { engineer: "max" } });
+  const set = optionsOf();
+  check("S3 Pengaturan menimpa .env", set.model === "claude-uji-pengaturan" && set.effort === "max", set);
+  check("S4 pilihan penugasan menimpa Pengaturan", optionsOf("sonnet[1m]").model === "sonnet[1m]");
+  const resolved = resolveEngine("engineer", "claude");
+  check("S5 penugasan baru mencatat model Pengaturan", resolved.model === "claude-uji-pengaturan", resolved);
+  check("S6 pilihan eksplisit di form menang", resolveEngine("engineer", "claude", "claude-form").model === "claude-form");
+
+  updateSettings({ claudeModels: { engineer: "nama model; rm -rf /" } });
+  check("S7 id model tidak sah ditolak (nilai lama tetap)", optionsOf().model === "claude-uji-pengaturan", optionsOf().model);
+  updateSettings({ claudeModels: { engineer: null }, efforts: { engineer: null } });
+  const reset = optionsOf();
+  check("S8 null = kembali ke .env", reset.model === CONFIG.models.engineer && reset.effort === CONFIG.effort.engineer, reset);
+  check("S9 tanpa Pengaturan, penugasan Claude tidak mengunci model", resolveEngine("engineer", "claude").model === undefined);
+}
+
 rmSync(sandbox, { recursive: true, force: true });
 if (failed > 0) {
   console.error(`${failed} pengujian gagal`);

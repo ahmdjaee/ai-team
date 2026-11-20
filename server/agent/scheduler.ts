@@ -4,7 +4,7 @@ import { closeBrowserFor } from "../browser/mcp.ts";
 import { CONFIG } from "../config.ts";
 import { composeHandoffMessage, composeOpeningMessage, composeReviewMessage } from "../messages.ts";
 import { ROLES } from "../roles.ts";
-import { defaultEngineFor, defaultModeFor, geminiModelFor } from "../settings.ts";
+import { defaultEngineFor, defaultModeFor, modelSetting } from "../settings.ts";
 import {
   ACTIVE_STATUSES,
   activeTasks,
@@ -32,18 +32,21 @@ type WorkspaceLock = { busy: boolean; waiters: Array<() => void> };
 
 const ENGINE_LABEL: Record<EngineId, string> = { claude: "Claude", antigravity: "Gemini" };
 
-/** Mesin & model untuk penugasan baru: pilihan eksplisit, atau bawaan bot di Pengaturan. */
+/**
+ * Mesin & model untuk penugasan baru: pilihan eksplisit, atau bawaan bot di Pengaturan. Model
+ * dicatat di penugasan supaya mengganti Pengaturan tidak mengubah tugas yang sudah jalan; kosong =
+ * `.env` (Claude) atau bawaan akun agy (Gemini) saat runner dimulai.
+ */
 export function resolveEngine(role: RoleId, engine?: EngineId, model?: string): { engine: EngineId; model?: string } {
   const chosen = engine ?? defaultEngineFor(role);
-  if (chosen === "claude") return { engine: chosen };
-  return { engine: chosen, model: model || geminiModelFor(role) };
+  return { engine: chosen, model: model || modelSetting(role, chosen) };
 }
 
 class Scheduler {
   private readonly runners = new Map<string, AgentRunner>();
   /** Mesin selain Claude didaftarkan modulnya sendiri, supaya scheduler tidak mengimpor kodenya. */
   private readonly factories: Partial<Record<EngineId, RunnerFactory>> = {
-    claude: ({ taskId, role, hooks, sessionId, mode }) => new TaskRunner(taskId, role, hooks, sessionId, mode),
+    claude: ({ taskId, role, hooks, sessionId, mode, model }) => new TaskRunner(taskId, role, hooks, sessionId, mode, model),
   };
   private readonly slots = new Semaphore(CONFIG.maxConcurrentAgents);
   /** Satu kunci per folder workspace: dua project dengan folder berbeda boleh menulis bersamaan. */

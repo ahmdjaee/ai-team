@@ -4,6 +4,7 @@ import { control } from "../../browser/control.ts";
 import { geminiEnv } from "../../accounts/gemini.ts";
 import { markAccountExpired } from "../../accounts/index.ts";
 import { CONFIG } from "../../config.ts";
+import { effortFor } from "../../settings.ts";
 import { contextBlock, workspaceForTask } from "../../context.ts";
 import { localBaseUrl, registerMcpEndpoint, type McpEndpoint } from "../../mcp-http.ts";
 import { ROLES } from "../../roles.ts";
@@ -502,7 +503,7 @@ export class AcpTaskRunner implements AgentRunner {
     }
 
     const thought = options.find((option) => option.id === "thought_level" || option.category === "thought_level");
-    const level = THOUGHT_LEVEL[ROLES[this.role].effort] ?? "high";
+    const level = THOUGHT_LEVEL[effortFor(this.role)] ?? "high";
     if (thought && thought.currentValue !== level && configValues(thought).includes(level)) {
       await set(thought.id, level).catch(() => undefined);
     }

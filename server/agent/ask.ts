@@ -7,6 +7,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { claudeEnv } from "../accounts/claude.ts";
 import { CONFIG } from "../config.ts";
+import { modelFor } from "../settings.ts";
 import { askContext, workspaceForTask } from "../context.ts";
 import { DENY_ALWAYS } from "../roles.ts";
 import { addAskCost, getTask, taskDir } from "../tasks.ts";
@@ -30,11 +31,18 @@ export type AskEvent =
 
 const READ_TOOLS = ["Read", "Grep", "Glob"];
 
-/** Model yang boleh dipakai panel Tanya: QA (murah) untuk tanya biasa, Engineer untuk analisis berat. */
-export const ASK_MODELS = [
-  { id: CONFIG.models.qa, label: "Cepat & murah" },
-  { id: CONFIG.models.engineer, label: "Analisis berat" },
-];
+/**
+ * Model yang boleh dipakai panel Tanya: model Claude bot QA (cepat) untuk tanya biasa, model bot
+ * Engineer untuk analisis berat — mengikuti Pengaturan → Bot, lalu `.env`.
+ */
+export function askModels(): { id: string; label: string }[] {
+  const fast = modelFor("qa", "claude") ?? CONFIG.models.qa;
+  const heavy = modelFor("engineer", "claude") ?? CONFIG.models.engineer;
+  return fast === heavy ? [{ id: fast, label: "Bawaan" }] : [
+    { id: fast, label: "Cepat & murah" },
+    { id: heavy, label: "Analisis berat" },
+  ];
+}
 
 /** Panel ini hanya membaca; apa pun yang bisa mengubah sesuatu ditolak diam-diam. */
 export function askOptions(taskId: string, model: string, history: AskMessage[]): Options {

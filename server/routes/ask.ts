@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { ASK_MODELS as MODELS, askHub } from "../agent/ask.ts";
+import { engineUsable } from "../accounts/index.ts";
+import { askHub, askModels } from "../agent/ask.ts";
 import { getTask } from "../tasks.ts";
 
 /** Aliran jawaban (delta/answer/busy) ada di WebSocket topik `ask:<id>` — lihat server/realtime.ts. */
@@ -10,7 +11,7 @@ askRouter.get("/tasks/:id/ask", (req, res) => {
     res.status(404).json({ error: "tugas tidak ditemukan" });
     return;
   }
-  res.json({ ...askHub.state(req.params.id), models: MODELS });
+  res.json({ ...askHub.state(req.params.id), models: askModels() });
 });
 
 askRouter.post("/tasks/:id/ask", async (req, res) => {
@@ -23,8 +24,15 @@ askRouter.post("/tasks/:id/ask", async (req, res) => {
     res.status(400).json({ error: "text wajib diisi" });
     return;
   }
+  // Panel Tanya berjalan di Claude; tanpa akun Claude yang siap, pertanyaan ditolak dengan alasannya.
+  const usable = engineUsable("claude");
+  if (!usable.ok) {
+    res.status(409).json({ error: `Tanya butuh akun Claude: ${usable.reason}` });
+    return;
+  }
+  const models = askModels();
   const requested = typeof req.body?.model === "string" ? req.body.model : "";
-  const model = MODELS.some((item) => item.id === requested) ? requested : MODELS[0]!.id;
+  const model = models.some((item) => item.id === requested) ? requested : models[0]!.id;
 
   if (askHub.state(req.params.id).busy) {
     res.status(409).json({ error: "masih menjawab pertanyaan sebelumnya" });
