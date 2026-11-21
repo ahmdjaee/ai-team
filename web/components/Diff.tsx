@@ -5,6 +5,7 @@ import { DiffFileCard } from "./diff/DiffFileCard.tsx";
 import { DiffFileList } from "./diff/DiffFileList.tsx";
 import { cardId, SOURCE_BADGE, splitPath } from "./diff/status.ts";
 import { useDiffTheme } from "./diff/useDiffTheme.ts";
+import { Select } from "./Select.tsx";
 
 type Mode = "unified" | "split";
 const MODE_KEY = "ai-team-diff-mode";
@@ -163,20 +164,20 @@ export const Diff = memo(function Diff({ projectId }: { projectId?: string }) {
             <DiffFileList files={files} active={activeKey} onSelect={selectFile} />
           </aside>
           <div className="min-w-0 flex-1 overflow-y-auto p-4">
-            <label className="mb-3 block @3xl:hidden">
-              <span className="sr-only">Pilih file</span>
-              <select
-                value={activeKey}
-                onChange={(event) => selectFile(event.target.value)}
-                className="w-full rounded-md border border-line-strong bg-page px-3 py-2 text-[13px] font-medium text-ink"
-              >
-                {files.map((file, index) => (
-                  <option key={file.key} value={file.key}>
-                    {splitPath(file.path).name} ({SOURCE_BADGE[file.source].short}) · {index + 1} dari {files.length}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <div className="mb-3 @3xl:hidden">
+              <Select
+                value={activeKey ?? ""}
+                onChange={selectFile}
+                ariaLabel="Pilih file"
+                size="lg"
+                className="w-full"
+                options={files.map((file, index) => ({
+                  value: file.key,
+                  label: `${splitPath(file.path).name} (${SOURCE_BADGE[file.source].short}) · ${index + 1} dari ${files.length}`,
+                  description: file.path,
+                }))}
+              />
+            </div>
             <div className="flex flex-col gap-4">
               {files.map((entry) => (
                 <DiffFileCard key={entry.key} entry={entry} mode={effectiveMode} theme={theme} />

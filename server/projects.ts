@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { CONFIG } from "./config.ts";
+import { PERSONAL_GEMINI_DIR } from "./protected.ts";
 import { MEMORY_TEMPLATE, fitMemory, trimMemory } from "./memory.ts";
 
 /**
@@ -210,6 +211,11 @@ export function validateWorkspaceDir(raw: unknown): { dir?: string; error?: stri
   }
   if (within(dir, CONFIG.dataDir) || within(CONFIG.dataDir, dir)) {
     return { error: "folder itu memuat data aplikasi ini (tugas, laporan) — pilih folder lain" };
+  }
+  for (const agy of [CONFIG.antigravity.dir, PERSONAL_GEMINI_DIR]) {
+    if (within(dir, agy) || within(agy, dir)) {
+      return { error: "folder itu memuat data dan setelan Antigravity — pilih folder lain" };
+    }
   }
   if (!existsSync(dir)) return { error: `folder ${dir} tidak ada` };
   try {

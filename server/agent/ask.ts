@@ -5,14 +5,21 @@ import {
   type Query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { CONFIG, agentEnv } from "../config.ts";
+import { claudeEnv } from "../accounts/claude.ts";
+import { PROVIDER_LABEL, accountView, engineUsable, pickEngine, providerOf } from "../accounts/index.ts";
+import { CONFIG } from "../config.ts";
+import { AgyChat, type ChatOptions } from "../engines/antigravity/chat.ts";
+import { effortFor, getSettings, modelFor, validModelId } from "../settings.ts";
 import { askContext, workspaceForTask } from "../context.ts";
-import { DENY_ALWAYS } from "../roles.ts";
+import { ARTIFACT_TOOLS, DENY_ALWAYS } from "../roles.ts";
 import { addAskCost, getTask, taskDir } from "../tasks.ts";
+import { ENGINE_IDS, isEngineId, type EngineId } from "../types.ts";
 
 export type AskMessage = {
   role: "user" | "assistant";
   text: string;
+  /** Mesin dan model yang menjawab (jawaban saja). */
+  engine?: EngineId;
   model?: string;
   costUsd?: number;
   ts: string;
@@ -29,11 +36,58 @@ export type AskEvent =
 
 const READ_TOOLS = ["Read", "Grep", "Glob"];
 
-/** Model yang boleh dipakai panel Tanya: QA (murah) untuk tanya biasa, Engineer untuk analisis berat. */
-export const ASK_MODELS = [
-  { id: CONFIG.models.qa, label: "Cepat & murah" },
-  { id: CONFIG.models.engineer, label: "Analisis berat" },
-];
+/** Pesan saat tidak ada mesin yang bisa menjawab. */
+export const ASK_NEEDS_ACCOUNT = "Tanya butuh akun Claude atau Gemini — tambahkan di Pengaturan → Akun AI";
+
+/**
+ * Bawaan panel Tanya dari Pengaturan → Bot (baris Panel Tanya). Panel memilih mesin dan model sendiri per
+ * pertanyaan; ini hanya pilihan awalnya dan isi opsi "Bawaan".
+ */
+export type AskDefaults = {
+  /** Mesin di Pengaturan. */
+  preferred: EngineId;
+  /** Mesin yang benar-benar dipakai kalau panel tidak memilih: `preferred` kalau akunnya siap; kosong = tidak ada akun. */
+  engine?: EngineId;
+  /** Model bawaan per mesin: Pengaturan, lalu `MODEL_ASK` (Claude); Gemini kosong = bawaan akun agy. */
+  models: Record<EngineId, string | undefined>;
+};
+
+export function askDefaults(): AskDefaults {
+  const preferred = getSettings().askEngine;
+  return {
+    preferred,
+    engine: pickEngine(preferred),
+    models: { claude: modelFor("ask", "claude"), antigravity: modelFor("ask", "antigravity") },
+  };
+}
+
+export type AskChoice = { engine: EngineId; model?: string };
+
+/**
+ * Pilihan mesin + model dari panel → pilihan yang dijalankan. Model harus ada di daftar model akunnya
+ * (kalau daftar itu terbaca); kosong = bawaan Tanya.
+ */
+export function resolveAskChoice(input: { engine?: unknown; model?: unknown }):
+  | { ok: true; choice: AskChoice }
+  | { ok: false; status: number; error: string } {
+  const defaults = askDefaults();
+  if (!defaults.engine) return { ok: false, status: 409, error: ASK_NEEDS_ACCOUNT };
+  if (input.engine !== undefined && input.engine !== "" && !isEngineId(input.engine)) {
+    return { ok: false, status: 400, error: `mesin tidak dikenal (${ENGINE_IDS.join("/")})` };
+  }
+  const engine = isEngineId(input.engine) ? input.engine : defaults.engine;
+  const usable = engineUsable(engine);
+  if (!usable.ok) return { ok: false, status: 409, error: `Tanya: ${usable.reason}` };
+
+  const requested = typeof input.model === "string" ? input.model.trim() : "";
+  if (!requested) return { ok: true, choice: { engine, model: defaults.models[engine] } };
+  if (!validModelId(requested)) return { ok: false, status: 400, error: "id model tidak sah" };
+  const known = accountView(providerOf(engine)).models;
+  if (known.length > 0 && !known.some((item) => item.id === requested) && requested !== defaults.models[engine]) {
+    return { ok: false, status: 400, error: `model ${requested} tidak ada di akun ${PROVIDER_LABEL[providerOf(engine)]}` };
+  }
+  return { ok: true, choice: { engine, model: requested } };
+}
 
 /** Panel ini hanya membaca; apa pun yang bisa mengubah sesuatu ditolak diam-diam. */
 export function askOptions(taskId: string, model: string, history: AskMessage[]): Options {
@@ -45,6 +99,7 @@ export function askOptions(taskId: string, model: string, history: AskMessage[])
   return {
     systemPrompt: askContext(taskId, history),
     model,
+    effort: effortFor("ask"),
     cwd: workspaceForTask(taskId),
     additionalDirectories: [taskDir(taskId)],
     settingSources: [],
@@ -67,17 +122,24 @@ export function askOptions(taskId: string, model: string, history: AskMessage[])
       },
     },
     allowedTools: READ_TOOLS,
-    disallowedTools: ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Task", "TodoWrite", "mcp__*"],
+    disallowedTools: ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Task", "TodoWrite", "mcp__*", ...ARTIFACT_TOOLS],
     permissionMode: "default",
     canUseTool: denyTool,
     includePartialMessages: true,
     // Inti "incognito": tidak ada transcript yang ditulis ke ~/.claude.
     persistSession: false,
-    env: agentEnv(),
+    env: claudeEnv(),
   };
 }
 
 type Listener = (event: AskEvent) => void;
+
+/** Sesi tanya satu mesin. Ganti mesin di tengah percakapan = tutup sesi lama, mulai baru dengan riwayat panel. */
+interface EngineAskSession {
+  readonly engine: EngineId;
+  ask(text: string, model: string | undefined, history: AskMessage[]): Promise<AskMessage>;
+  close(): void | Promise<void>;
+}
 
 /**
  * Satu sesi tanya-jawab per tugas, hidup di memori.
@@ -86,7 +148,8 @@ type Listener = (event: AskEvent) => void;
  */
 type Answer = { text: string; costUsd?: number };
 
-export class AskSession {
+export class AskSession implements EngineAskSession {
+  readonly engine = "claude" as const;
   private q?: Query;
   private pending?: string;
   private wake?: () => void;
@@ -183,7 +246,8 @@ export class AskSession {
   }
 
   /** Satu pertanyaan → satu jawaban. Pemanggil menjaga agar tidak ada dua sekaligus. */
-  async ask(text: string, model: string, history: AskMessage[]): Promise<AskMessage> {
+  async ask(text: string, requested: string | undefined, history: AskMessage[]): Promise<AskMessage> {
+    const model = requested ?? modelFor("ask", "claude") ?? CONFIG.models.ask;
     this.clearIdle();
     if (!this.q) this.start(model, history);
     else if (model !== this.model) {
@@ -216,6 +280,7 @@ export class AskSession {
     return {
       role: "assistant",
       text: answer.text || "(tidak ada jawaban)",
+      engine: "claude",
       model,
       costUsd: answer.costUsd,
       ts: new Date().toISOString(),
@@ -257,10 +322,105 @@ export class AskSession {
   }
 }
 
-class AskHub {
+/** Uji menyuntik agen ACP palsu; server memakai `agy` dan keyring akun Gemini app. */
+export type GeminiDeps = Pick<ChatOptions, "launch" | "accountEnv">;
+
+/**
+ * Padanan `AskSession` di Gemini: satu sesi `agy` hanya-baca per tugas, percakapan berlanjut di sesi itu.
+ * Ditutup saat menganggur, saat jawaban melewati batas waktu, atau saat gagal; pertanyaan berikutnya
+ * memulai sesi baru yang di-seed riwayat panel. agy tidak melaporkan biaya.
+ */
+export class GeminiAskSession implements EngineAskSession {
+  readonly engine = "antigravity" as const;
+  private chat?: AgyChat;
+  private abort?: AbortController;
+  private idleTimer?: NodeJS.Timeout;
+
+  constructor(
+    private readonly taskId: string,
+    private readonly emit: Listener,
+    private readonly deps: GeminiDeps = {},
+  ) {}
+
+  async ask(text: string, model: string | undefined, history: AskMessage[]): Promise<AskMessage> {
+    this.clearIdle();
+    if (this.chat?.ended) await this.stop();
+    if (!this.chat) {
+      this.chat = new AgyChat({
+        ...this.deps,
+        cwd: workspaceForTask(this.taskId),
+        additionalDirectories: [taskDir(this.taskId)],
+        areaDir: taskDir(this.taskId),
+        systemPrompt: askContext(this.taskId, history),
+        model,
+        effort: effortFor("ask"),
+        onText: (delta) => this.emit({ type: "delta", text: delta }),
+      });
+    } else {
+      await this.chat.setModel(model);
+    }
+    const chat = this.chat;
+
+    // CLI yang macet tidak boleh mengunci panel ini selamanya (state.busy).
+    const abort = new AbortController();
+    this.abort = abort;
+    const timer = setTimeout(
+      () => abort.abort(new Error(`Jawaban melewati ${Math.round(CONFIG.askTimeoutMs / 60_000)} menit — sesi tanya dihentikan.`)),
+      CONFIG.askTimeoutMs,
+    );
+    timer.unref();
+    try {
+      const reply = await chat.prompt(text, abort.signal);
+      if (reply.stopReason !== "end_turn" && !reply.text) throw new Error(`Gemini berhenti sebelum menjawab (${reply.stopReason}).`);
+      this.startIdle();
+      return {
+        role: "assistant",
+        text: reply.text || "(tidak ada jawaban)",
+        engine: "antigravity",
+        model: reply.model ?? model,
+        ts: new Date().toISOString(),
+      };
+    } catch (error) {
+      if (this.chat === chat) await this.stop();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      if (this.abort === abort) this.abort = undefined;
+    }
+  }
+
+  private startIdle(): void {
+    this.clearIdle();
+    this.idleTimer = setTimeout(() => void this.stop(), CONFIG.idleShutdownMs);
+    this.idleTimer.unref();
+  }
+
+  private clearIdle(): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = undefined;
+  }
+
+  /** Tutup proses agy; pertanyaan yang berjalan ditolak. */
+  async stop(): Promise<void> {
+    this.clearIdle();
+    this.abort?.abort(new Error("sesi tanya ditutup"));
+    this.abort = undefined;
+    const chat = this.chat;
+    this.chat = undefined;
+    await chat?.close();
+  }
+
+  close(): Promise<void> {
+    return this.stop();
+  }
+}
+
+export class AskHub {
   private readonly states = new Map<string, AskState>();
-  private readonly sessions = new Map<string, AskSession>();
+  private readonly sessions = new Map<string, EngineAskSession>();
   private readonly listeners = new Map<string, Set<Listener>>();
+
+  constructor(private readonly gemini: GeminiDeps = {}) {}
 
   state(taskId: string): AskState {
     return this.states.get(taskId) ?? { messages: [], busy: false, costUsd: 0 };
@@ -289,7 +449,7 @@ class AskHub {
     }
   }
 
-  async ask(taskId: string, text: string, model: string): Promise<AskMessage> {
+  async ask(taskId: string, text: string, choice: AskChoice): Promise<AskMessage> {
     if (!getTask(taskId)) throw new Error("tugas tidak ditemukan");
     const state = this.states.get(taskId) ?? { messages: [], busy: false, costUsd: 0 };
     this.states.set(taskId, state);
@@ -301,13 +461,19 @@ class AskHub {
     this.emit(taskId, { type: "busy", busy: true });
 
     let session = this.sessions.get(taskId);
+    if (session && session.engine !== choice.engine) {
+      // Ganti mesin: sesi baru di mesin lain menerima riwayat panel lewat system prompt.
+      void session.close();
+      session = undefined;
+    }
     if (!session) {
-      session = new AskSession(taskId, (event) => this.emit(taskId, event));
+      const emit = (event: AskEvent) => this.emit(taskId, event);
+      session = choice.engine === "claude" ? new AskSession(taskId, emit) : new GeminiAskSession(taskId, emit, this.gemini);
       this.sessions.set(taskId, session);
     }
 
     try {
-      const answer = await session.ask(text, model, history);
+      const answer = await session.ask(text, choice.model, history);
       state.messages.push(answer);
       state.costUsd = Number((state.costUsd + (answer.costUsd ?? 0)).toFixed(6));
       this.emit(taskId, { type: "answer", message: answer });
@@ -323,15 +489,16 @@ class AskHub {
   }
 
   clear(taskId: string): void {
-    this.sessions.get(taskId)?.close();
+    void this.sessions.get(taskId)?.close();
     this.sessions.delete(taskId);
     this.states.delete(taskId);
   }
 
-  closeAll(): void {
-    for (const session of this.sessions.values()) session.close();
+  async closeAll(): Promise<void> {
+    const sessions = [...this.sessions.values()];
     this.sessions.clear();
     this.states.clear();
+    await Promise.all(sessions.map((session) => session.close()));
   }
 }
 

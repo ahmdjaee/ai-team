@@ -9,13 +9,17 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { BrowserSession, closeBrowserFor, createBrowserServer } from "../browser/mcp.ts";
 import { control } from "../browser/control.ts";
-import { CONFIG, agentEnv } from "../config.ts";
+import { claudeEnv, claudeSessionExists, isClaudeAuthError } from "../accounts/claude.ts";
+import { markAccountExpired } from "../accounts/index.ts";
+import { CONFIG } from "../config.ts";
+import { effortFor, modelFor } from "../settings.ts";
 import { contextBlock, workspaceForTask } from "../context.ts";
-import { ROLES, permissionsFor, resolvePermissionMode } from "../roles.ts";
+import { ARTIFACT_TOOLS, ROLES, permissionsFor, resolvePermissionMode } from "../roles.ts";
 import { createTeamServer } from "../team/mcp.ts";
 import type { AskQuestion, AutonomyMode, ContextUsage, RoleId, UiEvent, WorkerStatus } from "../types.ts";
 import { bus } from "./bus.ts";
 import { resultMeta, toUiEvents, type ResultMeta } from "./events.ts";
+import type { AgentRunner } from "./runner-api.ts";
 import { guardHooks } from "./guard.ts";
 
 /** Selama turn berjalan, indikator konteks cukup diperbarui sesekali. */
@@ -102,7 +106,8 @@ export type RunnerHooks = {
  * Satu runner = satu penugasan aktif (satu tugas yang sedang dipegang satu bot).
  * Sesi Claude-nya milik tugas itu sendiri, bukan milik role.
  */
-export class TaskRunner {
+export class TaskRunner implements AgentRunner {
+  readonly engine = "claude" as const;
   status: WorkerStatus = "idle";
   sessionId?: string;
 
@@ -154,6 +159,8 @@ export class TaskRunner {
     private readonly hooks: RunnerHooks,
     sessionId?: string,
     private mode: AutonomyMode = "ask",
+    /** Model pilihan penugasan; kosong = Pengaturan, lalu `.env`. */
+    private readonly model?: string,
   ) {
     this.sessionId = sessionId;
   }
@@ -310,11 +317,26 @@ export class TaskRunner {
     this.wake?.();
     // Workspace, izin, dan konteks semuanya mengikuti project tugas ini.
     const workspaceDir = workspaceForTask(this.taskId);
+    this.dropMissingSession();
     const instance = query({ prompt: this.input(), options: this.options(workspaceDir) });
     this.q = instance;
     this.queryDir = workspaceDir;
     this.echoSeen = false;
     void this.consume(instance);
+  }
+
+  /**
+   * Transkrip sesi harus ada di folder akun Claude app; kalau tidak (sesi dari login laptop yang
+   * tidak ikut tersalin), `resume` akan gagal. Mulai sesi baru: instruksi, ringkasan, dan konteks
+   * tugas tetap ada di system prompt.
+   */
+  private dropMissingSession(): void {
+    if (!this.sessionId || claudeSessionExists(this.sessionId)) return;
+    this.sessionId = undefined;
+    this.emit({
+      type: "notice",
+      text: "Riwayat sesi Claude sebelumnya tidak ada di akun Claude app — bot memulai sesi baru dengan konteks tugas ini.",
+    });
   }
 
   private options(workspaceDir: string): Options {
@@ -333,8 +355,8 @@ export class TaskRunner {
         preset: "claude_code",
         append: `${role.persona}${contextBlock(this.taskId)}`,
       },
-      model: role.model,
-      effort: role.effort,
+      model: modelFor(this.role, "claude", this.model),
+      effort: effortFor(this.role),
       cwd: workspaceDir,
       additionalDirectories: [CONFIG.tasksDir],
       settingSources: CONFIG.includeUserSettings ? ["user", "project"] : ["project"],
@@ -344,13 +366,14 @@ export class TaskRunner {
       },
       permissionMode: resolvePermissionMode(role, this.mode),
       allowedTools: role.allowedTools,
-      disallowedTools: role.disallowedTools,
+      // Tool Artifact (halaman claude.ai) tidak ditawarkan ke model sama sekali; deny-nya ada di DENY_ALWAYS.
+      disallowedTools: [...role.disallowedTools, ...ARTIFACT_TOOLS],
       mcpServers,
       hooks: guardHooks(this.taskId, this.role),
       includePartialMessages: true,
       canUseTool: this.handlePermission,
       resume: this.sessionId,
-      env: agentEnv(),
+      env: claudeEnv(),
     };
   }
 
@@ -369,6 +392,9 @@ export class TaskRunner {
           continue;
         }
         if (message.type === "assistant" && typeof message.user_message_uuid === "string") this.echoSeen = true;
+        if (message.type === "assistant" && message.error === "authentication_failed") {
+          markAccountExpired("claude", "Claude menolak login akun app (authentication_failed)");
+        }
         const meta = resultMeta(message);
         for (const event of toUiEvents(message)) {
           if (event.type === "init") {
@@ -394,6 +420,7 @@ export class TaskRunner {
       }
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
+      if (isClaudeAuthError(failure)) markAccountExpired("claude", `Claude Code: ${failure.slice(0, 200)}`);
     }
     if (this.q !== instance) {
       // Sesi lama berakhir setelah diganti: kartu sesi yang baru bukan miliknya.

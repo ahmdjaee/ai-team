@@ -234,14 +234,23 @@ check("WebSocket dari Origin aplikasi tersambung", client.opened);
 
 // ---------- ask: snapshot dulu ----------
 {
+  // Snapshot membawa bawaan Tanya dari Pengaturan; mesin dan daftar model dibaca panel dari topik akun.
+  const store = await import("../server/accounts/store.ts");
+  const { CONFIG } = await import("../server/config.ts");
+  store.saveAccount("claude", { addedAt: new Date().toISOString(), status: "ok" });
   client.send({ op: "sub", sid: 6, topic: `ask:${task.id}` });
   await client.until(() => client.of(6).some((message) => message.op === "ready"));
   const first = client.of(6)[0]?.event;
   check(
-    "ask: diawali snapshot berisi model",
-    first?.type === "snapshot" && Array.isArray(first.messages) && first.models?.length === 2,
+    "ask: diawali snapshot berisi bawaan Tanya",
+    first?.type === "snapshot" &&
+      Array.isArray(first.messages) &&
+      first.defaults?.preferred === "claude" &&
+      first.defaults.engine === "claude" &&
+      first.defaults.models?.claude === CONFIG.models.ask,
     first,
   );
+  store.removeAccount("claude");
 }
 
 // ---------- live: aksi overlay hanya selama disimak ----------

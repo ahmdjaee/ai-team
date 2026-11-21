@@ -1,8 +1,21 @@
-import type { AttentionEvent, AutonomyMode, ContextUsage, RoleId, StoredEvent, UiEvent, WorkerStatus } from "../server/types.ts";
-import type { Settings } from "../server/settings.ts";
+import type {
+  AccountView,
+  AttentionEvent,
+  AutonomyMode,
+  ContextUsage,
+  Effort,
+  EngineId,
+  ModelOption,
+  ProviderId,
+  RoleId,
+  StoredEvent,
+  UiEvent,
+  WorkerStatus,
+} from "../server/types.ts";
+import type { ModelDefaults, ModelKey, Settings, SettingsPatch } from "../server/settings.ts";
 import type { Assignment, Review, Task, TaskStatus, TaskSummary } from "../server/tasks.ts";
 import type { Project } from "../server/projects.ts";
-import type { AskMessage } from "../server/agent/ask.ts";
+import type { AskDefaults, AskMessage } from "../server/agent/ask.ts";
 import type { DeletedRef } from "../server/deleted-tasks.ts";
 import type {
   DeletedRecapEntry,
@@ -15,7 +28,31 @@ import type {
   RecapVerdict,
 } from "../server/recap.ts";
 
-export type { AskMessage, Assignment, AttentionEvent, AutonomyMode, ContextUsage, Project, RoleId, Review, Settings, StoredEvent, Task, TaskStatus, TaskSummary, UiEvent, WorkerStatus };
+export type { AskDefaults, AskMessage, Assignment, AttentionEvent, AutonomyMode, ContextUsage, EngineId, Project, RoleId, Review, Settings, StoredEvent, Task, TaskStatus, TaskSummary, UiEvent, WorkerStatus };
+
+export type { AccountView, Effort, ModelDefaults, ModelKey, ModelOption, ProviderId };
+
+/** Pengaturan dari server plus nilai `.env` yang berlaku kalau model/penalaran dikosongkan. */
+export type SettingsView = Settings & { defaults: ModelDefaults };
+
+export type EngineInfo = {
+  id: EngineId;
+  label: string;
+  available: boolean;
+  reason?: string;
+  version?: string;
+  models?: ModelOption[];
+  defaultModel?: string;
+  checkedAt?: string;
+};
+
+export const EFFORT_LABEL: Record<Effort, string> = {
+  low: "Rendah",
+  medium: "Sedang",
+  high: "Tinggi",
+  xhigh: "Sangat tinggi",
+  max: "Maksimal",
+};
 export type { DeletedRecapEntry, DeletedRef, ProjectRecap, RecapEntry, RecapFinding, RecapSeverity, RecapTone, RecapTotals, RecapVerdict };
 export type { CoverageCell, CoverageState, Finding, FindingSeverity, FindingStatus, UnlinkedFinding } from "../server/findings.ts";
 export type { CuratorStatus } from "../server/agent/curator.ts";
@@ -74,7 +111,10 @@ export type RoleInfo = {
   id: RoleId;
   title: string;
   blurb: string;
+  /** Model Claude yang berlaku (Pengaturan, lalu `.env`). */
   model: string;
+  effort: Effort;
+  engine: EngineId;
   producesReport: boolean;
   usesBrowser: boolean;
 };
@@ -186,15 +226,24 @@ export const api = {
   taskDoc: (id: string, path: string) => request<DocContent>(docUrl(id, path)),
   taskNotes: (id: string) => request<{ text: string }>(`/api/tasks/${id}/notes`),
   askHistory: (id: string) =>
-    request<{ messages: AskMessage[]; busy: boolean; costUsd: number; models: { id: string; label: string }[] }>(
+    request<{ messages: AskMessage[]; busy: boolean; costUsd: number; defaults: AskDefaults }>(
       `/api/tasks/${id}/ask`,
     ),
-  ask: (id: string, body: { text: string; model?: string }) =>
+  ask: (id: string, body: { text: string; engine?: EngineId; model?: string }) =>
     request<{ message: AskMessage }>(`/api/tasks/${id}/ask`, { method: "POST", body: JSON.stringify(body) }),
   clearAsk: (id: string) => request<{ ok: true }>(`/api/tasks/${id}/ask`, { method: "DELETE" }),
   saveTaskNotes: (id: string, text: string) =>
     request<{ text: string }>(`/api/tasks/${id}/notes`, { method: "PUT", body: JSON.stringify({ text }) }),
-  createTask: (body: { title: string; description: string; role: RoleId; projectId: string; targetUrl?: string }) =>
+  engines: (refresh = false) => request<{ engines: EngineInfo[] }>(`/api/engines${refresh ? "?refresh=1" : ""}`),
+  createTask: (body: {
+    title: string;
+    description: string;
+    role: RoleId;
+    projectId: string;
+    targetUrl?: string;
+    engine?: EngineId;
+    model?: string;
+  }) =>
     request<{ task: Task }>("/api/tasks", { method: "POST", body: JSON.stringify(body) }),
   message: (id: string, text: string) =>
     request<{ ok: true }>(`/api/tasks/${id}/message`, { method: "POST", body: JSON.stringify({ text }) }),
@@ -206,7 +255,7 @@ export const api = {
       method: "DELETE",
       body: JSON.stringify({ confirm }),
     }),
-  handoff: (id: string, body: { role: RoleId; note?: string }) =>
+  handoff: (id: string, body: { role: RoleId; note?: string; engine?: EngineId; model?: string }) =>
     request<{ ok: true; task: Task }>(`/api/tasks/${id}/handoff`, { method: "POST", body: JSON.stringify(body) }),
   review: (id: string, body: { status: "approved" | "changes_requested"; comment: string; sendBackToAgent: boolean }) =>
     request<{ ok: true; task: Task }>(`/api/tasks/${id}/review`, { method: "POST", body: JSON.stringify(body) }),
@@ -223,9 +272,19 @@ export const api = {
     }),
   setMode: (id: string, mode: AutonomyMode) =>
     request<{ ok: true; task: Task }>(`/api/tasks/${id}/mode`, { method: "POST", body: JSON.stringify({ mode }) }),
-  settings: () => request<Settings>("/api/settings"),
-  saveSettings: (patch: Partial<Settings>) =>
-    request<Settings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  settings: () => request<SettingsView>("/api/settings"),
+  saveSettings: (patch: SettingsPatch) =>
+    request<SettingsView>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+
+  accounts: () => request<{ accounts: AccountView[] }>("/api/accounts"),
+  startLogin: (provider: ProviderId) =>
+    request<{ account: AccountView }>(`/api/accounts/${provider}/login`, { method: "POST" }),
+  submitLoginCode: (provider: ProviderId, code: string) =>
+    request<{ account: AccountView }>(`/api/accounts/${provider}/login/code`, { method: "POST", body: JSON.stringify({ code }) }),
+  /** Batalkan login yang berjalan, atau tutup hasil login yang sudah selesai. */
+  closeLogin: (provider: ProviderId) => request<{ account: AccountView }>(`/api/accounts/${provider}/login`, { method: "DELETE" }),
+  checkAccount: (provider: ProviderId) => request<{ account: AccountView }>(`/api/accounts/${provider}/check`, { method: "POST" }),
+  logoutAccount: (provider: ProviderId) => request<{ account: AccountView }>(`/api/accounts/${provider}/logout`, { method: "POST" }),
 
   projects: () => request<{ projects: ProjectInfo[] }>("/api/projects"),
   project: (id: string) => request<ProjectDetail>(`/api/projects/${encodeURIComponent(id)}`),

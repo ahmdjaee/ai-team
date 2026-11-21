@@ -12,6 +12,7 @@ import {
 import { taskPath } from "../routes.tsx";
 import { MarkdownEditor, isEditorView, type EditorView } from "./MarkdownEditor.tsx";
 import { ProjectReport } from "./ProjectReport.tsx";
+import { Select } from "./Select.tsx";
 
 const TABS = [
   ["context", "Konteks"],
@@ -154,21 +155,16 @@ function Tasks({
           </span>
           {task.costUsd > 0 && <span className="shrink-0 text-[11px] text-faint">${task.costUsd.toFixed(4)}</span>}
           {others.length > 0 && (
-            <select
+            <Select
               value=""
-              onChange={(e) => void api.moveTask(task.id, e.target.value).then(onChanged)}
+              onChange={(value) => void api.moveTask(task.id, value).then(onChanged)}
+              ariaLabel={`Pindahkan ${task.id} ke project lain`}
               title="Pindahkan tugas ini ke project lain"
-              className="shrink-0 rounded border border-line bg-page px-1 py-0.5 text-[11px] text-muted"
-            >
-              <option value="" disabled>
-                pindah ke…
-              </option>
-              {others.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
+              placeholder="pindah ke…"
+              size="sm"
+              className="shrink-0"
+              options={others.map((project) => ({ value: project.id, label: project.name }))}
+            />
           )}
         </div>
       ))}

@@ -9,19 +9,26 @@ Aplikasi pribadi untuk menugaskan pekerjaan nyata ke empat rekan kerja AI senior
 | **DevOps Engineer** | Inspeksi server, rencana + rollback, eksekusi setelah Anda setujui | Transcript + kartu persetujuan per perintah |
 | **UI/UX Designer** | Mengaudit tampilan, alur, aksesibilitas, dan responsif lewat Chromium; tidak mengubah kode | tab **Live** · `report.md` berisi temuan + spesifikasi untuk Engineer di tab **Laporan** |
 
-Semua bot memakai **sesi login Claude Code yang sudah ada di mesin ini** (`~/.claude/.credentials.json`) lewat
-`@anthropic-ai/claude-agent-sdk` — tanpa `ANTHROPIC_API_KEY`. Buktinya ada di sidebar: email dan tipe langganan Anda.
+Bot berjalan dengan **akun AI milik app**: login Claude (langganan Pro/Max) dan/atau login Google untuk Gemini, ditambahkan
+di **Pengaturan → Akun AI** dan terpisah dari `claude` maupun `agy` di terminal. Mesin mengikuti akun: hanya akun Claude
+berarti hanya Claude, tambah akun Gemini berarti keduanya. Lihat [Akun AI](#akun-ai).
+
+Bot Claude memakai `@anthropic-ai/claude-agent-sdk` tanpa `ANTHROPIC_API_KEY`. Bot Gemini memakai Antigravity CLI, dipilih
+per bot, per tugas, dan saat oper. Lihat [Mesin Gemini (Antigravity)](#mesin-gemini-antigravity), termasuk risikonya bagi akun.
 
 ## Jalankan
 
 ```bash
 bun install
 cp .env.example .env     # sesuaikan WORKSPACE_DIR dan TARGET_URL
-bun run check:auth       # bukti sesi login terpakai (apiKeySource: none)
+bun run check:auth       # bukti akun Claude app terpakai (apiKeySource: none) — setelah login di Pengaturan
 bun run check:browser    # bukti Playwright + Chromium siap
 bun run check:mcp        # bukti tool browser & tim terdaftar
 bun run start   # http://127.0.0.1:4320
 ```
+
+Setelah server hidup, buka **Pengaturan → Akun AI** dan tambahkan akun Claude dan/atau Gemini. Sebelum ada akun,
+tombol **+ Tugas** nonaktif dan banner di atas halaman menjelaskan kenapa.
 
 Pengembangan UI (hot reload di 4321, API tetap 4320): `bun run dev`.
 Pindahkan laporan dari versi lama (kalau ada `data/reports/`): `bun run migrate:v1`.
@@ -64,7 +71,8 @@ systemctl --user enable --now ai-team.service
 Unit-nya ada di `deploy/ai-team.service`. Dua barisnya tidak boleh diubah sembarangan:
 `WorkingDirectory` (karena `.env` dibaca dari cwd dan `DATA_DIR=./data`) dan `Environment=PATH`
 (karena Agent SDK memanggil `claude` dari PATH — tanpa `~/.local/bin` server tampak sehat tapi
-semua tugas gagal start; `GET /api/health/auth` adalah cara tercepat memeriksanya).
+semua tugas gagal start; `GET /api/health/auth` adalah cara tercepat memeriksanya — 200 kalau ada akun siap, 503 kalau
+belum, dengan status tiap akun).
 
 Operasi harian:
 
@@ -79,6 +87,79 @@ Service ini mulai saat Anda login dan berhenti saat logout; tugas yang tertunda 
 otomatis saat start berikutnya. Kalau ingin hidup sejak boot tanpa login: `loginctl enable-linger jae`
 — unit-nya tidak perlu diubah. Server berjalan di Bun (`~/.bun/bin/bun`); setelah `bun upgrade`, cukup
 `systemctl --user restart ai-team`.
+
+## Akun AI
+
+**Pengaturan → Akun AI** memuat satu kartu per penyedia (satu akun per penyedia):
+
+| Status | Arti |
+|---|---|
+| Terhubung | Akun siap; email, paket, dan jumlah model tampil di kartu. |
+| Gagal diperiksa | Pemeriksaan terakhir gagal karena hal lain (mis. jaringan). Bot tetap boleh jalan. |
+| Perlu login ulang | Login ditolak penyedianya. Bot di mesin itu tidak dijalankan sampai Anda login lagi. |
+| Belum ditambahkan | Mesin itu tidak bisa dipilih di mana pun. |
+| Belum tersedia | Program yang dibutuhkan belum terpasang (`agy`, atau `dbus-daemon`/`gnome-keyring-daemon` untuk Gemini). |
+
+**Menambahkan akun.** Tekan **Tambah akun**, lalu **Buka halaman login ↗**. Masuk di tab baru; halaman akhirnya
+menampilkan kode (Claude) atau membuka halaman Antigravity (Gemini). Tempel kode itu, atau alamat lengkap halaman
+Antigravity, di dialog lalu tekan **Kirim kode**. Batas waktunya 10 menit. Dialog boleh ditutup: login tetap berjalan di
+server, dan tombol **Lanjutkan login** membukanya lagi.
+
+Di belakangnya server menjalankan alur login resmi CLI-nya sebagai proses milik app: `claude auth login --claudeai` dan
+`agy acp --login`. App tidak punya OAuth sendiri. URL login, kode, dan output CLI tidak pernah ditulis ke log.
+
+**Periksa** membaca ulang status login dan daftar model. **Keluar** menjalankan `claude auth logout` (Claude), atau
+mencabut sesi `agy` lalu membuang keyring pribadinya (Gemini). Riwayat tugas tetap ada; tugas yang memakai mesin itu
+menunggu sampai Anda login lagi.
+
+**Terpisah dari terminal.**
+
+- Claude: semua proses Claude milik app memakai `CLAUDE_CONFIG_DIR=data/accounts/claude`. Kredensial, `.claude.json`,
+  dan transkrip sesi bot ada di sana; `~/.claude` tidak disentuh.
+- Gemini: `agy` menyimpan token Google di keyring desktop lewat D-Bus, dan folder data saja tidak memisahkannya.
+  Karena itu app menjalankan `dbus-daemon` dan `gnome-keyring-daemon` miliknya sendiri. Keyring-nya ada di
+  `data/accounts/gemini/keyring/`, dikunci kata sandi acak di `keyring.secret` (0600). Semua proses `agy` milik app
+  diarahkan ke bus itu, jadi `agy` di terminal tetap memakai login Anda sendiri. Keyring ini dimulai saat pertama
+  dipakai dan berhenti bersama server.
+
+**Tanpa akun yang siap:**
+
+- tugas baru dan oper ke mesin itu ditolak (409) dengan alasannya;
+- pesan dan review "perlu perbaikan" ke tugas di mesin itu juga ditolak;
+- tugas yang sedang berjalan saat server mati tidak dilanjutkan. Statusnya menjadi "perlu dibaca" dengan catatan, dan
+  pesan berikutnya setelah akun siap melanjutkannya;
+- panel Tanya hanya bisa memilih mesin yang akunnya siap, dan kurator memori pindah ke mesin lain yang siap. Tanpa akun
+  sama sekali, keduanya tidak berjalan dan alasannya tampil di panel/laporan project;
+- login yang ditolak saat tugas berjalan menandai akun "Perlu login ulang".
+
+**Pindah dari login laptop.** Setelah akun Claude pertama kali terhubung, transkrip sesi yang dirujuk tugas disalin
+sekali dari `~/.claude/projects/` ke folder akun app, supaya tugas lama tetap bisa dilanjutkan. Hanya sesi milik tugas
+yang disalin, dan `~/.claude` tidak diubah. Kredensial laptop sengaja tidak diimpor: token refresh yang berputar akan
+saling membatalkan, jadi login sekali di app. Folder `data/antigravity/` versi sebelumnya dipindah ke
+`data/accounts/gemini/`, dan akun Gemini perlu login sekali di app.
+
+> **Hanya untuk dipakai sendiri.** Login langganan ini milik Anda dan hanya untuk app di mesin Anda sendiri. Jangan
+> bagikan app atau folder `data/` beserta loginnya ke orang lain.
+
+Bot tidak bisa membaca atau mengubah akun. `data/accounts/` dan `data/accounts.json` ditolak untuk semua mesin. Perintah
+yang menyebut `CLAUDE_CONFIG_DIR` atau `.credentials.json`, yang menjalankan `claude auth`/`claude setup-token`,
+`agy --login`/`--logout`, atau yang memakai alat keyring/D-Bus (`secret-tool`, `gdbus`, `busctl`, …) selalu ditolak.
+
+## Model & penalaran per bot
+
+**Pengaturan → Bot** memuat satu baris per bot plus kurator memori dan panel Tanya, dengan kolom Mesin, Model, Penalaran,
+dan Mode:
+
+- Daftar model diambil dari akunnya sendiri (Claude Code `supportedModels()`; untuk Gemini, daftar model `agy`).
+- Model atau penalaran yang dikosongkan memakai `.env` (`MODEL_*`, `EFFORT_*`).
+- Mesin tanpa akun siap tidak bisa dipilih. Kalau hanya satu akun yang ada, kolom Mesin cukup berupa teks.
+- Baris **Kurator memori** dan **Panel Tanya** juga punya kolom Mesin (bawaan Claude), tanpa Mode. Kalau akun mesin
+  pilihannya belum siap, keduanya sementara memakai mesin lain yang siap. Baris Panel Tanya hanya bawaan: di panel,
+  mesin dan model bisa diganti per pertanyaan.
+
+Pilihan ini berlaku untuk tugas dan operan baru. Form **+ Tugas** dan **Oper ke…** bisa menggantinya per penugasan, juga
+untuk Claude. Model dicatat di penugasan (`assignments[].model`), jadi mengubah Pengaturan tidak mengubah tugas yang
+sudah jalan.
 
 ## Cara kerja
 
@@ -126,6 +207,8 @@ Satu tugas atau satu lampiran bisa di-bookmark. Alamat tugas yang sudah tidak ad
 ## Sidebar
 
 Tombol **«** di sebelah judul — atau **Ctrl+B** (Cmd+B di Mac) dari mana saja — melipat sidebar jadi rel sempit; isi tugas memakai ruang yang kosong itu. Di rel masih tersedia **»** untuk membuka lagi, tombol **+** untuk tugas baru, dan pengganti tema. Pilihannya tersimpan di browser Anda, jadi bertahan setelah muat ulang.
+
+Status akun AI ada di Pengaturan → Akun AI. Kalau belum ada akun yang siap sama sekali, sebuah banner muncul dengan tautan ke sana.
 
 ## Tema
 
@@ -192,16 +275,21 @@ Semua pembaruan live — thread, status, tab Live, laporan, rekap project, panel
 
 ## Tanya (chat incognito)
 
-Tombol **Tanya** di header tugas — atau **Ctrl+K** — membuka panel di sisi kanan: sesi Claude terpisah yang tahu seluk-beluk tugas itu dan bisa Anda tanyai tanpa mengotori percakapan utama.
+Tombol **Tanya** di header tugas — atau **Ctrl+K** — membuka panel di sisi kanan: sesi Claude atau Gemini terpisah yang tahu seluk-beluk tugas itu dan bisa Anda tanyai tanpa mengotori percakapan utama.
 
-Yang ia **tidak** lakukan: tidak menulis satu baris pun ke `thread.jsonl`, tidak dibaca bot yang mengerjakan tugas, tidak menulis sesi ke `~/.claude` (`persistSession: false`), tidak pernah memunculkan kartu persetujuan, dan tidak bisa mengubah apa pun — hanya `Read`/`Grep`/`Glob`, tanpa Bash/Edit/Write, dengan `notes.md` dan kredensial tetap ditolak.
+Yang ia **tidak** lakukan: tidak menulis satu baris pun ke `thread.jsonl`, tidak dibaca bot yang mengerjakan tugas, tidak menyimpan sesi Claude (`persistSession: false`), tidak pernah memunculkan kartu persetujuan, dan tidak bisa mengubah apa pun, dengan `notes.md` dan kredensial tetap ditolak:
+
+- di Claude hanya `Read`/`Grep`/`Glob`, tanpa Bash/Edit/Write;
+- di Gemini hanya `read_file` dan perintah yang membaca (`ls`, `cat`, `grep`, `git log`, …), dinilai pagar yang sama dengan mode *Hanya baca*. Menulis, web, subagen, dan `ask_question` ditolak.
 
 Yang ia **lihat**: instruksi tugas, status, ringkasan serah terima, 40 kejadian terakhir percakapan, konteks & memori project, plus path transcript penuh/laporan/lampiran/workspace supaya bisa membuka sendiri kalau perlu.
 
 - Panel tetap terbuka saat Anda berpindah tab (Kerja → Laporan → Lampiran), ditutup dengan **Esc**, tombol **✕**, atau Ctrl+K lagi.
-- Pemilih model per pertanyaan: *Cepat & murah* (`MODEL_QA`) atau *Analisis berat* (`MODEL_ENGINEER`).
+- Pemilih per pertanyaan di bawah kolom tanya: **Claude / Gemini**, lalu model apa pun dari daftar model akun itu. Mesin tanpa akun siap tidak bisa dipilih, dan daftarnya ikut berubah saat Anda login atau keluar.
+- Pilihan awalnya dari baris **Panel Tanya** di Pengaturan → Bot (bawaan Claude dengan `MODEL_ASK`, yang bawaannya sama dengan `MODEL_QA`; Gemini tanpa model terpilih memakai model bawaan akun agy). Opsi *Bawaan Tanya* mengikuti baris itu. Pilihan di panel diingat selama tab terbuka, juga saat pindah tugas.
+- Ganti model di mesin yang sama melanjutkan sesi yang sama; ganti mesin memulai sesi baru yang tetap membawa riwayat panel. Mesin dan model yang menjawab tertulis kecil di bawah tiap jawaban.
 - Percakapannya hidup **di memori server**: bertahan saat refresh halaman, hilang saat `systemctl --user restart ai-team` atau saat Anda menekan **Hapus percakapan**.
-- Biayanya dicatat terpisah (`askCostUsd` di `task.json`) dan tampil di kaki panel, jadi angka biaya di daftar tugas tetap berarti "biaya bot".
+- Biayanya dicatat terpisah (`askCostUsd` di `task.json`) dan tampil di kaki panel, jadi angka biaya di daftar tugas tetap berarti "biaya bot". Jawaban Gemini tidak membawa biaya, karena `agy` tidak melaporkannya.
 
 ## Catatan per tugas
 
@@ -239,7 +327,7 @@ Hal yang hanya berlaku di satu proyek masuk ke konteks/memori project, bukan ke 
 
 ## Konteks & sesi
 
-Tiap **penugasan** punya sesi Claude sendiri (`task.json` → `assignments[].sessionId`), jadi konteks antar tugas tidak tercampur dan dua tugas QA bisa jalan bersamaan. Sesi disimpan, sehingga:
+Tiap **penugasan** punya sesi Claude sendiri (atau sesi agy untuk penugasan Gemini; `task.json` → `assignments[].sessionId`), jadi konteks antar tugas tidak tercampur dan dua tugas QA bisa jalan bersamaan. Sesi disimpan, sehingga:
 
 - tugas yang menganggur lebih dari `IDLE_SHUTDOWN_MS` (default 10 menit) menutup subprocess-nya, dan pesan berikutnya melanjutkan sesi yang sama;
 - tugas yang sedang berjalan saat server mati akan **dilanjutkan otomatis** setelah server hidup lagi.
@@ -256,20 +344,83 @@ Urutan evaluasi Claude Code: **hooks → deny → ask → permission mode → al
 
 Aturan per bot ada di `server/roles.ts`, persona di `server/prompts/*.md`. Keduanya memang dibuat untuk Anda sunting.
 
+## Mesin Gemini (Antigravity)
+
+Selain Claude, bot bisa dijalankan dengan Gemini lewat Antigravity CLI (`agy acp`, Agent Client Protocol), memakai akun
+Google yang Anda tambahkan di **Pengaturan → Akun AI**.
+
+> **Risiko akun.** FAQ Antigravity menyebut pemakaian `agy` di dalam aplikasi lain belum didukung untuk paket pribadi,
+> dan Terms-nya (pasal 6) membolehkan Google menangguhkan akun. Peringatan yang sama tampil di UI di setiap pilihan Gemini.
+
+**Menyiapkan**
+
+1. Pasang Antigravity CLI, plus `dbus-daemon` dan `gnome-keyring-daemon` (paket `dbus` dan `gnome-keyring`) untuk
+   keyring pribadi app. Login `agy` di terminal tidak dipakai dan tidak berubah.
+2. Buka **Pengaturan → Akun AI → Gemini → Tambah akun**, lalu login dengan akun Google. Riwayat, setelan, dan keyring
+   `agy` milik AI Team ada di `data/accounts/gemini/`; `~/.gemini` Anda tidak disentuh.
+3. Kartu Gemini "Terhubung" berarti login berhasil dan daftar modelnya terbaca. Kalau tidak, alasannya tertulis di
+   kartu; tekan **Periksa** setelah memperbaikinya.
+
+**Memilih mesin**
+
+- **Pengaturan → Bot:** mesin, model, dan penalaran bawaan per bot, untuk Claude maupun Gemini.
+- **+ Tugas** dan **Oper ke…:** mengikuti setelan bot yang dipilih, dan bisa diganti per penugasan. Jadi
+  `QA (Gemini) → Engineer (Claude)` bisa terjadi dalam satu tugas; bot berikutnya menerima ringkasan serah terima yang sama.
+- Penugasan Gemini ditandai lencana **Gemini** di header tugas dan di daftar tugas.
+- Panel **Tanya** bisa memakai Gemini kalau akun Gemini siap, dengan model apa pun dari akun itu. **Kurator memori** memakai mesin di Pengaturan →
+  Bot (bawaan Claude), atau Gemini kalau hanya akun itu yang ada. Keduanya berjalan sebagai sesi `agy` *Hanya baca*;
+  kurator menulis register lewat server MCP `curator` miliknya, dibuka lewat HTTP seperti tool `team`. Putaran kurator di
+  Gemini tercatat tanpa biaya.
+
+**Cara pagarnya bekerja**
+
+`agy` tidak meminta izin untuk membaca atau menulis berkas. Karena itu AI Team memasang hook `PreToolUse` di folder
+data `agy` miliknya. Sebelum `agy` memanggil tool apa pun, hook mengirimkannya ke server AI Team
+(`server/engines/antigravity/hook-client.ts` → `/api/internal/agy-hook`). Server menilainya dengan aturan yang sama
+dengan jalur Claude: `server/policy.ts`, aturan role di `server/roles.ts`, folder terlindung, dan mode otonomi.
+Hasilnya salah satu dari tiga:
+
+- diizinkan;
+- ditolak dengan alasan, yang dibaca agen sebelum ia melanjutkan;
+- kartu persetujuan di UI.
+
+Kalau server tidak bisa dihubungi, hook menolak.
+
+- Bot tidak bisa membaca atau menulis folder akun (`data/accounts/`, termasuk folder data dan keyring `agy`),
+  `~/.gemini`, maupun kode `server/engines/antigravity/`.
+- Yang selalu ditolak: subagen, swarm, browser bawaan `agy`, dan server MCP selain `team`/`browser`. QA dan UI/UX
+  memakai browser AI Team, jadi tab **Live** dan **Ambil alih** tetap jalan.
+- "Izinkan & ingat" tidak tersedia untuk Gemini. Setiap perintah di luar allow-list dimintakan persetujuan sendiri.
+
+**Bedanya dengan Claude**
+
+- Tidak ada biaya $. Baris hasil turn menampilkan jumlah token.
+- Pertanyaan agen muncul sebagai kartu pertanyaan biasa. Membalas lewat chat juga dihitung sebagai jawaban.
+- `agy` tidak mengirim isi hasil tool MCP (browser, team), jadi kartunya hanya bertuliskan "selesai". Isinya terlihat
+  di tab Live dan di laporan.
+- Perintah panjang bisa dipindah `agy` ke latar. Turn yang dimulai agen sendiri ditandai "dimulai agen sendiri".
+- `agy` memperbarui dirinya sendiri. Kalau perilakunya berubah, mulai pemeriksaan dari status di Pengaturan dan
+  `bun run check:acp`.
+
 ## Konfigurasi (`.env`)
 
 | Variabel | Arti |
 |---|---|
 | `WORKSPACE_DIR` | Folder kerja **bawaan** Engineer & DevOps, dipakai project yang tidak punya folder sendiri. |
 | `TARGET_URL` | URL target **bawaan**, dipakai project yang tidak punya URL sendiri. |
-| `MODEL_QA` / `MODEL_ENGINEER` / `MODEL_DEVOPS` / `MODEL_UIUX` | Model per bot. |
-| `EFFORT_*` | `low` … `max`. Makin tinggi makin teliti, makin lambat, makin boros kuota. |
+| `MODEL_QA` / `MODEL_ENGINEER` / `MODEL_DEVOPS` / `MODEL_UIUX` / `MODEL_CURATOR` / `MODEL_ASK` | Model Claude **bawaan** per bot, kurator, dan panel Tanya (`MODEL_ASK` kosong = `MODEL_QA`); Pengaturan → Bot menimpanya. |
+| `EFFORT_*` | Penalaran **bawaan**, `low` … `max`, termasuk `EFFORT_CURATOR` dan `EFFORT_ASK` (keduanya `medium`). Makin tinggi makin teliti, makin lambat, makin boros kuota. Pengaturan → Bot menimpanya. |
 | `MAX_CONCURRENT_AGENTS` | Berapa tugas boleh jalan bersamaan (default 2). |
 | `IDLE_SHUTDOWN_MS` | Kapan subprocess tugas yang menganggur ditutup (default 10 menit). |
-| `STOP_GRACE_MS` | Batas tunggu turn yang dihentikan dengan Stop (default 20 detik); lewat dari itu proses Claude ditutup paksa (sesinya tetap bisa dilanjutkan). |
+| `STOP_GRACE_MS` | Batas tunggu turn yang dihentikan dengan Stop (default 20 detik); lewat dari itu proses agen (Claude atau `agy`) ditutup paksa (sesinya tetap bisa dilanjutkan). |
 | `ASK_TIMEOUT_MS` | Batas waktu satu jawaban panel Tanya (default 5 menit). |
 | `ALLOWED_HOSTS` / `ALLOWED_ORIGINS` | Host/Origin tambahan yang boleh membuka API dan WebSocket, dipisah koma. Bawaan: `127.0.0.1`, `localhost`, `::1`, plus `ai-team.local` kalau `/etc/hosts` mengarahkannya ke `127.0.0.1` (dicek ulang tiap 30 detik). Permintaan dari situs lain ditolak `403` (anti CSRF dan DNS rebinding). |
-| `INCLUDE_USER_SETTINGS` | `1` untuk ikut memuat skill/plugin global dari `~/.claude`. |
+| `INCLUDE_USER_SETTINGS` | `1` untuk ikut memuat setelan "user" Claude Code — sekarang dari folder akun app (`data/accounts/claude/`), bukan `~/.claude`. |
+| `AGY_BIN` | Perintah Antigravity CLI (default `agy` dari `PATH`). |
+| `AGY_DIR` | Folder data dan keyring `agy` milik AI Team (default `data/accounts/gemini`). |
+| `AGY_HOOK_TIMEOUT_SEC` | Batas tunggu satu kartu persetujuan Gemini sebelum dianggap ditolak (default 6 jam). |
+| `AGY_BACKGROUND_QUIET_MS` | Turn latar dari `agy` dianggap selesai setelah sekian lama tanpa update (default 15 detik). |
+| `AGY_TRACE` | Path berkas untuk mencatat lalu lintas ACP mentah. Hanya untuk diagnosis: isinya memuat percakapan. |
 
 ## Data
 
@@ -286,16 +437,21 @@ data/memory.md                 memori global (lintas project)
 data/projects/<id>/project.json  nama, URL target, folder workspace
 data/projects/<id>/context.md    konteks project yang Anda tulis
 data/projects/<id>/memory.md     memori project (ditulis bot lewat `remember`)
+data/settings.json               Pengaturan: mode, mesin, model & penalaran per bot, notifikasi
+data/accounts.json               metadata akun AI (email, paket, daftar model, status) — tanpa rahasia
+data/accounts/claude/            CLAUDE_CONFIG_DIR milik app: kredensial Claude + transkrip sesi bot (projects/)
+data/accounts/gemini/            riwayat sesi `agy` + config/hooks.json (pagar) + keyring/ dan keyring.secret (login Google)
 ```
 
-Hapus `data/` untuk mulai dari nol (sesi Claude Code-nya sendiri ada di `~/.claude/projects/`).
+Hapus `data/` untuk mulai dari nol, termasuk login akun AI.
 
 ## Batasan yang perlu Anda tahu
 
 - **Aplikasi ini menjalankan perintah sebagai user Anda.** Server hanya bind ke `127.0.0.1` dan tanpa autentikasi. Jangan diekspos ke jaringan.
-- **Kuota langganan dibagi** dengan Claude Code harian Anda. Satu tugas QA penuh ±$0,25–0,6; satu tugas Engineer dengan test ±$0,7–1,0 setara pemakaian. Biaya per tugas tampil di daftar.
+- **Kuota langganan dibagi** dengan Claude Code harian Anda kalau akun Claude yang Anda tambahkan sama. Satu tugas QA penuh ±$0,25–0,6; satu tugas Engineer dengan test ±$0,7–1,0 setara pemakaian. Biaya per tugas tampil di daftar.
 - **Satu workspace per project dipakai bersama** oleh tugas di project itu: tugas kode di project yang sama dijalankan bergantian (kunci per folder workspace), belum ada checkout terpisah per tugas.
-- `settingSources: ["project"]` berarti `CLAUDE.md` dan `.claude/` milik workspace ikut termuat; aturan `permissions.allow` milik repo itu ikut berlaku (deny milik aplikasi ini tetap menang).
+- `settingSources: ["project"]` berarti `CLAUDE.md` dan `.claude/` milik workspace ikut termuat; aturan `permissions.allow` milik repo itu ikut berlaku (deny milik aplikasi ini tetap menang). `~/.claude/CLAUDE.md` di laptop **tidak** ikut, karena app memakai folder akunnya sendiri.
+- **Tidak ada Artifact (halaman claude.ai).** Tool `Artifact`/`ArtifactComments`/`ArtifactData` dan konektor claude.ai (`mcp__claude_ai_*`, termasuk Claude Docs) selalu ditolak untuk bot, panel Tanya, dan kurator, di mode apa pun termasuk Auto. Tool Artifact juga tidak ditawarkan ke model sama sekali.
 - Belum ada: sandbox container, jadwal otomatis, dependensi antar tugas, beberapa bot paralel di dalam **satu** tugas, dan bot yang membuat tugas sendiri tanpa persetujuan.
 
 ## Halaman demo

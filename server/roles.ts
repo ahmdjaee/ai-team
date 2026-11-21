@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EffortLevel, PermissionMode } from "@anthropic-ai/claude-agent-sdk";
 import { CONFIG } from "./config.ts";
+import { ANTIGRAVITY_CODE_DIR, PERSONAL_GEMINI_DIR } from "./protected.ts";
 import type { AutonomyMode, RoleId } from "./types.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -27,10 +28,18 @@ export type RoleDef = {
   producesReport: boolean;
 };
 
+/**
+ * Tool Artifact Claude Code: membuat/mengubah halaman claude.ai. Pemilik melarang Artifact di laptop ini, dan
+ * larangan di `~/.claude/CLAUDE.md` tidak terbaca sesi app (folder login app terpisah) — jadi ditolak di sini,
+ * di semua mode (aturan deny juga berlaku di mode Auto), dan disembunyikan dari model lewat `disallowedTools`.
+ */
+export const ARTIFACT_TOOLS = ["Artifact", "ArtifactComments", "ArtifactData"];
+
 export const DENY_ALWAYS = [
-  // Konektor claude.ai milik akun (Figma, Mobbin, dll.) ikut menempel ke sesi CLI.
+  // Konektor claude.ai milik akun (Figma, Mobbin, Claude Docs, dll.) ikut menempel ke sesi CLI.
   // Tim ini hanya boleh memakai tool buatan aplikasi ini, bukan konektor pribadi Anda.
   "mcp__claude_ai_*",
+  ...ARTIFACT_TOOLS,
   "Bash(sudo:*)",
   "Bash(mkfs:*)",
   "Bash(dd:*)",
@@ -44,6 +53,17 @@ export const DENY_ALWAYS = [
   `Read(${abs(`${CONFIG.tasksDir}/**/notes.md`)})`,
   `Write(${abs(`${CONFIG.tasksDir}/**/notes.md`)})`,
   `Edit(${abs(`${CONFIG.tasksDir}/**/notes.md`)})`,
+  // Mesin Antigravity: data & hooks.json milik AI Team, ~/.gemini pribadi, dan kode hook-nya.
+  // Bot Claude yang menyunting salah satunya bisa mematikan pagar bot Gemini.
+  // Akun AI milik app (token Claude, keyring Google) dan metadatanya.
+  `Read(${abs(`${CONFIG.dataDir}/accounts.json`)})`,
+  ...[...new Set([CONFIG.accountsDir, CONFIG.antigravity.dir, PERSONAL_GEMINI_DIR])].flatMap((dir) => [
+    `Read(${abs(`${dir}/**`)})`,
+    `Write(${abs(`${dir}/**`)})`,
+    `Edit(${abs(`${dir}/**`)})`,
+  ]),
+  `Write(${abs(`${ANTIGRAVITY_CODE_DIR}/**`)})`,
+  `Edit(${abs(`${ANTIGRAVITY_CODE_DIR}/**`)})`,
 ];
 
 export const ROLES: Record<RoleId, RoleDef> = {

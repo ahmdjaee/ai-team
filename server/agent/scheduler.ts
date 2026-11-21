@@ -1,14 +1,16 @@
+import { engineUsable } from "../accounts/index.ts";
 import { control } from "../browser/control.ts";
 import { closeBrowserFor } from "../browser/mcp.ts";
 import { CONFIG } from "../config.ts";
 import { composeHandoffMessage, composeOpeningMessage, composeReviewMessage } from "../messages.ts";
 import { ROLES } from "../roles.ts";
-import { defaultModeFor } from "../settings.ts";
+import { defaultEngineFor, defaultModeFor, modelSetting } from "../settings.ts";
 import {
   ACTIVE_STATUSES,
   activeTasks,
   addAssignment,
   currentAssignment,
+  engineOf,
   extractHandoffSummary,
   getTask,
   hasHandoffSummary,
@@ -17,9 +19,10 @@ import {
   updateTask,
   type Task,
 } from "../tasks.ts";
-import type { AutonomyMode, RoleId, WorkerStatus } from "../types.ts";
+import type { AutonomyMode, ContextUsage, EngineId, RoleId, WorkerStatus } from "../types.ts";
 import { bus } from "./bus.ts";
-import { TaskRunner, type TurnOutcome } from "./runner.ts";
+import type { AgentRunner, RunnerFactory } from "./runner-api.ts";
+import { TaskRunner, type RunnerHooks, type TurnOutcome } from "./runner.ts";
 import { Semaphore } from "./semaphore.ts";
 
 /** Role yang menulis ke workspace: hanya boleh satu yang aktif pada satu waktu. */
@@ -27,8 +30,24 @@ const WRITES_WORKSPACE: RoleId[] = ["engineer", "devops"];
 
 type WorkspaceLock = { busy: boolean; waiters: Array<() => void> };
 
+const ENGINE_LABEL: Record<EngineId, string> = { claude: "Claude", antigravity: "Gemini" };
+
+/**
+ * Mesin & model untuk penugasan baru: pilihan eksplisit, atau bawaan bot di Pengaturan. Model
+ * dicatat di penugasan supaya mengganti Pengaturan tidak mengubah tugas yang sudah jalan; kosong =
+ * `.env` (Claude) atau bawaan akun agy (Gemini) saat runner dimulai.
+ */
+export function resolveEngine(role: RoleId, engine?: EngineId, model?: string): { engine: EngineId; model?: string } {
+  const chosen = engine ?? defaultEngineFor(role);
+  return { engine: chosen, model: model || modelSetting(role, chosen) };
+}
+
 class Scheduler {
-  private readonly runners = new Map<string, TaskRunner>();
+  private readonly runners = new Map<string, AgentRunner>();
+  /** Mesin selain Claude didaftarkan modulnya sendiri, supaya scheduler tidak mengimpor kodenya. */
+  private readonly factories: Partial<Record<EngineId, RunnerFactory>> = {
+    claude: ({ taskId, role, hooks, sessionId, mode, model }) => new TaskRunner(taskId, role, hooks, sessionId, mode, model),
+  };
   private readonly slots = new Semaphore(CONFIG.maxConcurrentAgents);
   /** Satu kunci per folder workspace: dua project dengan folder berbeda boleh menulis bersamaan. */
   private readonly workspaceLocks = new Map<string, WorkspaceLock>();
@@ -87,12 +106,20 @@ class Scheduler {
 
   // ---------- runner ----------
 
-  private runnerFor(task: Task): TaskRunner {
+  registerEngine(engine: EngineId, factory: RunnerFactory): void {
+    this.factories[engine] = factory;
+  }
+
+  private runnerFor(task: Task): AgentRunner {
+    const assignment = currentAssignment(task);
+    const engine = engineOf(assignment);
     const existing = this.runners.get(task.id);
-    if (existing && existing.role === task.role) return existing;
+    if (existing && existing.role === task.role && existing.engine === engine) return existing;
     if (existing) void existing.close();
 
-    const runner = new TaskRunner(task.id, task.role, {
+    const factory = this.factories[engine];
+    if (!factory) throw new Error(`mesin ${engine} belum tersedia di server ini`);
+    const hooks = {
       acquire: () => this.slots.acquire(),
       lockWorkspace: (role, dir) => this.lockWorkspace(role, dir),
       onSession: (taskId, sessionId) => {
@@ -102,20 +129,28 @@ class Scheduler {
       onStatus: (taskId, status) => this.onStatus(taskId, status),
       onTurnEnd: (taskId, outcome) => this.onTurnEnd(taskId, outcome),
       onIdleShutdown: (taskId) => this.onIdleShutdown(taskId),
-      onContext: (taskId, usage) => {
+      onContext: (taskId: string, usage: ContextUsage) => {
         patchAssignment(taskId, { context: { ...usage, at: new Date().toISOString() } });
       },
-    }, currentAssignment(task).sessionId, task.mode ?? defaultModeFor(task.role));
+    } satisfies RunnerHooks;
+    const runner = factory({
+      taskId: task.id,
+      role: task.role,
+      hooks,
+      sessionId: assignment.sessionId,
+      mode: task.mode ?? defaultModeFor(task.role),
+      model: assignment.model,
+    });
 
     this.runners.set(task.id, runner);
     return runner;
   }
 
-  getRunner(taskId: string): TaskRunner | undefined {
+  getRunner(taskId: string): AgentRunner | undefined {
     return this.runners.get(taskId);
   }
 
-  findRunnerWithRequest(requestId: string): TaskRunner | undefined {
+  findRunnerWithRequest(requestId: string): AgentRunner | undefined {
     return [...this.runners.values()].find((runner) => runner.hasRequest(requestId));
   }
 
@@ -191,6 +226,15 @@ class Scheduler {
 
   // ---------- perintah ----------
 
+  /**
+   * Alasan tugas ini tidak bisa dijalankan sekarang: akun penyedia mesinnya belum ada di app atau
+   * perlu login ulang. Route menolak permintaan dengan alasan ini (409) sebelum memanggil perintah.
+   */
+  blockedReason(task: Task): string | undefined {
+    const usable = engineUsable(engineOf(currentAssignment(task)));
+    return usable.ok ? undefined : usable.reason;
+  }
+
   /** Tugas baru: kirim pesan pembuka dan biarkan antrean yang mengatur gilirannya. */
   start(task: Task): void {
     this.runnerFor(task).send(composeOpeningMessage(task), {
@@ -253,10 +297,16 @@ class Scheduler {
   }
 
   /** Oper tugas ke bot lain: runner lama ditutup, bot baru dapat konteks lengkap. */
-  async handoff(taskId: string, role: RoleId, note?: string): Promise<Task | undefined> {
+  async handoff(
+    taskId: string,
+    role: RoleId,
+    note?: string,
+    choice: { engine?: EngineId; model?: string } = {},
+  ): Promise<Task | undefined> {
     const before = getTask(taskId);
     if (!before) return undefined;
     const previous = currentAssignment(before);
+    const next = resolveEngine(role, choice.engine, choice.model);
 
     const runner = this.runners.get(taskId);
     if (runner) {
@@ -265,12 +315,22 @@ class Scheduler {
       this.runners.delete(taskId);
     }
 
-    bus.emit(taskId, before.role, { type: "handoff", from: before.role, to: role, note });
-    const task = addAssignment(taskId, role, note);
+    bus.emit(taskId, before.role, {
+      type: "handoff",
+      from: before.role,
+      to: role,
+      note,
+      fromEngine: engineOf(previous),
+      toEngine: next.engine,
+    });
+    const task = addAssignment(taskId, role, note, next.engine, next.model);
     if (!task) return undefined;
 
+    // Label mesin hanya kalau berbeda dari Claude atau berganti: operan biasa tetap seperti dulu.
+    const showEngine = next.engine !== "claude" || engineOf(previous) !== next.engine;
+    const target = `${ROLES[role].title}${showEngine ? ` (${ENGINE_LABEL[next.engine]})` : ""}`;
     this.runnerFor(task).send(composeHandoffMessage(task, previous, note), {
-      display: `Dioper ke ${ROLES[role].title}${note ? ` — ${note}` : ""}`,
+      display: `Dioper ke ${target}${note ? ` — ${note}` : ""}`,
       from: "system",
     });
     return task;
@@ -286,11 +346,24 @@ class Scheduler {
     });
   }
 
-  /** Setelah server dimulai ulang: lanjutkan tugas yang sempat berjalan. */
+  /**
+   * Setelah server dimulai ulang: lanjutkan tugas yang sempat berjalan. Tugas yang akun mesinnya
+   * belum siap tidak dijalankan: statusnya jadi "perlu review" dengan catatan, dan pemilik cukup
+   * mengirim pesan setelah akunnya ditambahkan untuk melanjutkan.
+   */
   resumePending(): number {
     let resumed = 0;
     for (const task of activeTasks()) {
       const assignment = currentAssignment(task);
+      const blocked = this.blockedReason(task);
+      if (blocked) {
+        updateTask(task.id, { status: "needs_review" });
+        bus.emit(task.id, task.role, {
+          type: "notice",
+          text: `Tugas tidak dilanjutkan setelah server dimulai ulang: ${blocked}. Kirim pesan untuk melanjutkan setelah akunnya siap.`,
+        });
+        continue;
+      }
       updateTask(task.id, { status: "queued" });
       const fresh = getTask(task.id);
       if (!fresh) continue;

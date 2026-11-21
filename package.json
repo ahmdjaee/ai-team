@@ -27,6 +27,9 @@
     "check:actions": "bun scripts/check-actions.ts",
     "check:diff": "bun scripts/check-diff.ts",
     "check:delete": "bun scripts/check-delete.ts",
+    "check:acp": "bun scripts/check-acp.ts",
+    "check:accounts": "bun scripts/check-accounts.ts",
+    "check:mcp-http": "bun scripts/check-mcp-http.ts",
     "fix:costs": "bun scripts/fix-costs.ts",
     "gate:suggest": "bun scripts/gates/suggest-collapse.ts",
     "gate:recap": "bun scripts/gates/project-recap.ts",
@@ -35,8 +38,10 @@
     "gate:task-report": "bun scripts/gates/task-report.ts"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "2.4.0",
     "@anthropic-ai/claude-agent-sdk": "0.3.310",
     "@git-diff-view/react": "^0.1.8",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "express": "5.3.0",
     "markdown-it": "15.0.3",
     "playwright": "1.64.1",

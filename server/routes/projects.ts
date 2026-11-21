@@ -16,7 +16,7 @@ import {
 import { deletedRefs, type DeletedRef } from "../deleted-tasks.ts";
 import { buildProjectRecap, type ProjectRecap } from "../recap.ts";
 import { renderFindingsMarkdown, renderReportMarkdown } from "../report-markdown.ts";
-import { curator } from "../agent/curator.ts";
+import { CURATOR_NEEDS_ACCOUNT, curator, curatorEngine } from "../agent/curator.ts";
 import {
   FINDING_STATUSES,
   canRevert,
@@ -201,6 +201,10 @@ projectsRouter.post("/projects/:id/curate", (req, res) => {
   const project = getProject(req.params.id);
   if (!project) {
     res.status(404).json({ error: "project tidak ditemukan" });
+    return;
+  }
+  if (!curatorEngine()) {
+    res.status(409).json({ error: CURATOR_NEEDS_ACCOUNT });
     return;
   }
   void curator.run(project.id, true);

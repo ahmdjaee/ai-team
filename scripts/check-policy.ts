@@ -1,7 +1,22 @@
 /** Tabel uji pagar keras. Deterministik, tanpa biaya model: bun run check:policy */
 import { classifyCommand, commitRequestedIn, type PolicyCategory } from "../server/policy.ts";
 
-const ctx = { workspaceDir: "/var/www/ai-team/workspace", taskDir: "/var/www/ai-team/data/tasks/T-001" };
+const ctx = {
+  workspaceDir: "/var/www/ai-team/workspace",
+  taskDir: "/var/www/ai-team/data/tasks/T-001",
+  // Bentuk yang dihasilkan protectedCommandPaths(): path absolut plus ekor relatifnya.
+  protectedPaths: [
+    "/var/www/ai-team/data/accounts",
+    "/var/www/ai-team/data/accounts.json",
+    "data/accounts",
+    "data/accounts.json",
+    "/var/www/ai-team/data/antigravity",
+    "/home/owner/.gemini",
+    "/var/www/ai-team/server/engines/antigravity",
+    "data/antigravity",
+    "engines/antigravity",
+  ],
+};
 
 type Case = [command: string, decision: "deny" | "ask" | "pass", category?: PolicyCategory, commitRequested?: boolean];
 
@@ -56,6 +71,36 @@ const CASES: Case[] = [
   ["sudo reboot", "deny"],
   ["ssh host 'shutdown -h now'", "deny"],
   ["psql -c 'DROP DATABASE produksi'", "deny"],
+
+  // folder pagar mesin Antigravity dan ~/.gemini pribadi
+  ["cat /var/www/ai-team/data/antigravity/gemini/config/hooks.json", "deny"],
+  ["sed -i 's/deny/allow/' ../ai-team/data/antigravity/gemini/config/hooks.json", "deny"],
+  ["cat ~/.gemini/antigravity-cli/settings.json", "deny"],
+  ["ls -la $HOME/.gemini", "deny"],
+
+  // akun AI milik app: token Claude, keyring Google, perintah login/logout
+  ["cat /var/www/ai-team/data/accounts/claude/.credentials.json", "deny"],
+  ["ls ../data/accounts/gemini/keyring", "deny"],
+  ["cat data/accounts.json", "deny"],
+  ['cat "$CLAUDE_CONFIG_DIR/.claude.json"', "deny"],
+  ["echo $CLAUDE_CONFIG_DIR", "deny"],
+  ["find / -name .credentials.json 2>/dev/null", "deny"],
+  ["claude auth status --json", "deny"],
+  ["npx claude setup-token", "deny"],
+  ["agy acp --login", "deny"],
+  ["agy --logout", "deny"],
+  ["secret-tool search --all service antigravity", "deny"],
+  ["gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets", "deny"],
+  ["busctl --user list", "deny"],
+  ["ls data/accounts-lama", "pass"],
+  ["grep -rn accountsRouter server/", "pass"],
+  ['claude -p "ringkas README"', "pass"],
+  ["agy --version", "pass"],
+  ["cat /home/owner/.gemini/x", "deny"],
+  ["cat /var/www/ai-team/server/engines/antigravity/hook-client.ts", "deny"],
+  ["cat ~/.geminirc", "pass"],
+  ["ls ./data/antigravity-assets", "pass"],
+  ["grep -rn antigravity src/", "pass"],
 
   // git commit — format pesan
   ['git commit -m "feat: add login"', "pass", undefined, true],
