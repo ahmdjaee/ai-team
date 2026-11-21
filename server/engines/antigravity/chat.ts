@@ -1,12 +1,11 @@
 import * as acp from "@agentclientprotocol/sdk";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { geminiEnv } from "../../accounts/gemini.ts";
-import { markAccountExpired } from "../../accounts/index.ts";
+import { isGeminiAuthError as isAgyAuthError } from "ai-agent-auth/gemini";
+import { geminiEnv, markAccountExpired } from "../../accounts/index.ts";
 import { CONFIG } from "../../config.ts";
 import { localBaseUrl, registerMcpEndpoint, type McpEndpoint } from "../../mcp-http.ts";
 import type { Effort } from "../../types.ts";
 import { commandVerdictIn } from "../../agent/guard.ts";
-import { isAgyAuthError } from "./availability.ts";
 import { applySessionConfig, type SetConfig } from "./config-options.ts";
 import { AcpEventMapper } from "./events.ts";
 import { HOOK_PATH, registerHookHandler, type HookAnswer, type HookPayload } from "./hooks.ts";

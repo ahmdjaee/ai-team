@@ -1,3 +1,5 @@
+import type { AccountView as BaseAccountView } from "ai-agent-auth/types";
+
 export type RoleId = "qa" | "engineer" | "devops" | "uiux";
 
 /** Seberapa bebas agen bertindak dalam satu tugas. */
@@ -31,34 +33,11 @@ export function isEffort(value: unknown): value is Effort {
   return typeof value === "string" && (EFFORTS as readonly string[]).includes(value);
 }
 
-/** Satu pilihan model dari akun (Claude: `supportedModels()`, Gemini: config option `model` di agy). */
-export type ModelOption = { id: string; name: string; description?: string };
+/** Akun AI milik app (ai-agent-auth): pilihan model, status akun, dan status login. */
+export type { AccountState, LoginPhase, LoginView, ModelOption } from "ai-agent-auth/types";
 
-/**
- * `none` belum ditambahkan · `ok` siap · `expired` perlu login ulang · `error` pemeriksaan terakhir
- * gagal karena hal lain · `unavailable` tidak bisa dipakai di mesin ini (program belum terpasang).
- */
-export type AccountState = "none" | "ok" | "expired" | "error" | "unavailable";
-
-export type LoginPhase = "starting" | "awaiting_code" | "verifying" | "done" | "failed" | "cancelled";
-
-/** Status login yang sedang berjalan. URL hanya untuk pemilik — tidak pernah dicatat di log. */
-export type LoginView = { phase: LoginPhase; url?: string; error?: string; startedAt: string; expiresAt: string };
-
-export type AccountView = {
-  provider: ProviderId;
-  engine: EngineId;
-  label: string;
-  state: AccountState;
-  email?: string;
-  plan?: string;
-  reason?: string;
-  models: ModelOption[];
-  defaultModel?: string;
-  checkedAt?: string;
-  addedAt?: string;
-  login?: LoginView;
-};
+/** View akun dari library + mesin agen yang memakai akun ini. */
+export type AccountView = BaseAccountView<ProviderId> & { engine: EngineId };
 
 /** Hal yang pantas menarik perhatian pemilik produk, lintas tugas. */
 export type AttentionEvent = {

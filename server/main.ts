@@ -2,8 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
-import { accountViews, initAccounts } from "./accounts/index.ts";
-import { stopGeminiKeyring } from "./accounts/keyring.ts";
+import { accountViews, disposeAccounts, initAccounts } from "./accounts/index.ts";
 import { askHub } from "./agent/ask.ts";
 import { curator } from "./agent/curator.ts";
 import { scheduler } from "./agent/scheduler.ts";
@@ -97,7 +96,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`\n${signal} — menutup sesi agen…`);
   realtime.close();
   await Promise.all([askHub.closeAll(), curator.closeAll(), scheduler.closeAll()]);
-  await stopGeminiKeyring();
+  await disposeAccounts();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3_000).unref();
 }

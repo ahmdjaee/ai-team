@@ -1,69 +1,34 @@
 import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import type { AccountView as BaseAccountView } from "ai-agent-auth";
 import { CONFIG } from "../config.ts";
-import { antigravityInfo, resetAntigravityCache } from "../engines/antigravity/availability.ts";
 import { PROVIDER_ENGINE, PROVIDER_IDS, type AccountView, type EngineId, type ProviderId } from "../types.ts";
-import { claudeLoginSpec, claudeLogout, claudeModels, claudeStatus, migrateClaudeSessions } from "./claude.ts";
-import { emailFromOutput, geminiLoginSpec, geminiLogout, geminiMissing } from "./gemini.ts";
-import { LoginFlow, type LoginVerdict } from "./login.ts";
-import {
-  ensureAccountDir,
-  getAccount,
-  markMigration,
-  migrationDone,
-  notifyAccountsChanged,
-  patchAccount,
-  removeAccount,
-  saveAccount,
-  type AccountRecord,
-} from "./store.ts";
+import { auth } from "./auth.ts";
+import { migrateClaudeOnce } from "./claude.ts";
 
-export { claudeEnv } from "./claude.ts";
-export { geminiEnv } from "./gemini.ts";
-export { onAccountsChanged } from "./store.ts";
+/**
+ * Fasad akun untuk AI Team di atas ai-agent-auth: pemetaan akun ke mesin agen, pagar scheduler,
+ * dan migrasi khas app. Login, pemeriksaan, dan penyimpanan ada di library (`auth`).
+ */
+export { auth };
 
 export const PROVIDER_LABEL: Record<ProviderId, string> = { claude: "Claude", gemini: "Gemini" };
-
-/** Pemeriksaan ulang otomatis paling sering sekali per 10 menit; tombol Periksa memaksa. */
-const CHECK_MS = 10 * 60_000;
-const CLAUDE_MIGRATION = "claude-sessions-from-home";
-
-const flows: Record<ProviderId, LoginFlow> = {
-  claude: new LoginFlow(() => notifyAccountsChanged()),
-  gemini: new LoginFlow(() => notifyAccountsChanged()),
-};
-const checking = new Map<ProviderId, Promise<void>>();
 
 export function providerOf(engine: EngineId): ProviderId {
   return engine === "claude" ? "claude" : "gemini";
 }
 
-function unavailable(provider: ProviderId): string | undefined {
-  return provider === "gemini" ? geminiMissing() : undefined;
+/** View library + mesin agen yang memakai akun ini. */
+export function withEngine(view: BaseAccountView<ProviderId>): AccountView {
+  return { ...view, engine: PROVIDER_ENGINE[view.provider] };
 }
 
 export function accountView(provider: ProviderId): AccountView {
-  const record = getAccount(provider);
-  const missing = unavailable(provider);
-  const state = missing ? "unavailable" : !record ? "none" : record.status;
-  return {
-    provider,
-    engine: PROVIDER_ENGINE[provider],
-    label: PROVIDER_LABEL[provider],
-    state,
-    email: record?.email,
-    plan: record?.plan,
-    reason: missing ?? record?.error,
-    models: record?.models ?? [],
-    defaultModel: record?.defaultModel,
-    checkedAt: record?.checkedAt,
-    addedAt: record?.addedAt,
-    login: flows[provider].view(),
-  };
+  return withEngine(auth.view(provider));
 }
 
 export function accountViews(): AccountView[] {
-  return PROVIDER_IDS.map(accountView);
+  return auth.views().map(withEngine);
 }
 
 /**
@@ -93,129 +58,25 @@ export function pickEngine(preferred: EngineId): EngineId | undefined {
 
 /** Galat login saat tugas berjalan: tandai akun perlu login ulang supaya UI dan scheduler tahu. */
 export function markAccountExpired(provider: ProviderId, reason: string): void {
-  const record = getAccount(provider);
-  if (!record || record.status === "expired") return;
-  patchAccount(provider, { status: "expired", error: reason.slice(0, 300), checkedAt: new Date().toISOString() });
-}
-
-async function refreshClaude(record: AccountRecord): Promise<AccountRecord> {
-  const checkedAt = new Date().toISOString();
-  const status = await claudeStatus();
-  if (!status.loggedIn) return { ...record, status: "expired", error: "Claude Code melaporkan akun app belum login", checkedAt };
-  let models = record.models;
-  let error: string | undefined;
-  try {
-    models = await claudeModels();
-  } catch (failure) {
-    error = `daftar model tidak terbaca: ${(failure as Error).message}`.slice(0, 300);
-  }
-  return { ...record, email: status.email ?? record.email, plan: status.plan ?? record.plan, models, status: "ok", error, checkedAt };
-}
-
-async function refreshGemini(record: AccountRecord, force: boolean): Promise<AccountRecord> {
-  const info = await antigravityInfo(force);
-  if (info.available) {
-    return { ...record, models: info.models ?? record.models, defaultModel: info.defaultModel, status: "ok", error: undefined, checkedAt: info.checkedAt };
-  }
-  return { ...record, status: info.authFailed ? "expired" : "error", error: info.reason, checkedAt: info.checkedAt };
+  auth.markExpired(provider, reason);
 }
 
 /** Periksa login dan baca ulang daftar model. Tanpa `force`, hasil yang masih baru dipakai ulang. */
 export function checkAccount(provider: ProviderId, force = false): Promise<void> {
-  const record = getAccount(provider);
-  if (!record || unavailable(provider)) return Promise.resolve();
-  if (!force && record.checkedAt && Date.now() - Date.parse(record.checkedAt) < CHECK_MS && record.status === "ok") return Promise.resolve();
-  const existing = checking.get(provider);
-  if (existing) return existing;
-  const job = (async () => {
-    try {
-      const next = provider === "claude" ? await refreshClaude(record) : await refreshGemini(record, force);
-      // Akun bisa sudah dihapus saat pemeriksaan berjalan.
-      if (getAccount(provider)) saveAccount(provider, next);
-    } catch (error) {
-      if (getAccount(provider)) patchAccount(provider, { status: "error", error: (error as Error).message.slice(0, 300), checkedAt: new Date().toISOString() });
-    }
-  })().finally(() => checking.delete(provider));
-  checking.set(provider, job);
-  return job;
+  return auth.check(provider, { force });
 }
 
-function migrateClaudeOnce(): void {
-  if (migrationDone(CLAUDE_MIGRATION)) return;
-  try {
-    const result = migrateClaudeSessions();
-    markMigration(CLAUDE_MIGRATION);
-    if (result.copied || result.missing) {
-      console.log(`[akun] transkrip sesi Claude disalin dari ~/.claude: ${result.copied}, tidak ditemukan: ${result.missing}`);
-    }
-  } catch (error) {
-    console.warn(`[akun] salin transkrip sesi Claude gagal: ${(error as Error).message}`);
-  }
-}
-
-async function verifyClaude(): Promise<LoginVerdict> {
-  const status = await claudeStatus();
-  if (!status.loggedIn) return { ok: false, error: "Claude Code belum mencatat login. Ulangi dan pastikan kodenya disalin utuh." };
-  const previous = getAccount("claude");
-  saveAccount("claude", {
-    addedAt: previous?.addedAt ?? new Date().toISOString(),
-    email: status.email,
-    plan: status.plan,
-    models: previous?.models,
-    status: "ok",
-    checkedAt: new Date().toISOString(),
-  });
-  migrateClaudeOnce();
-  // Daftar model menyusul tanpa menahan dialog login.
-  void checkAccount("claude", true);
-  return { ok: true };
-}
-
-async function verifyGemini(output: string): Promise<LoginVerdict> {
-  resetAntigravityCache();
-  const info = await antigravityInfo(true);
-  if (!info.available) return { ok: false, error: info.reason ?? "akun Gemini belum bisa dipakai" };
-  const previous = getAccount("gemini");
-  saveAccount("gemini", {
-    addedAt: previous?.addedAt ?? new Date().toISOString(),
-    email: emailFromOutput(output) ?? previous?.email,
-    models: info.models,
-    defaultModel: info.defaultModel,
-    status: "ok",
-    checkedAt: info.checkedAt,
-  });
-  return { ok: true };
-}
-
-export async function startLogin(provider: ProviderId): Promise<void> {
-  const missing = unavailable(provider);
-  if (missing) throw new Error(missing);
-  ensureAccountDir(provider);
-  const flow = flows[provider];
-  if (flow.active) throw new Error("login untuk akun ini sedang berjalan");
-  if (provider === "claude") flow.start(claudeLoginSpec(), () => verifyClaude());
-  else flow.start(await geminiLoginSpec(), (output) => verifyGemini(output));
-}
-
-export function submitLoginCode(provider: ProviderId, code: string): void {
-  flows[provider].submitCode(code);
-}
-
+export const startLogin = (provider: ProviderId): Promise<void> => auth.startLogin(provider);
+export const submitLoginCode = (provider: ProviderId, code: string): void => auth.submitCode(provider, code);
 /** Batalkan login yang berjalan dan lupakan status dialognya. */
-export function dismissLogin(provider: ProviderId): void {
-  flows[provider].clear();
-}
+export const dismissLogin = (provider: ProviderId): void => auth.dismissLogin(provider);
+export const logoutAccount = (provider: ProviderId): Promise<void> => auth.logout(provider);
+export const onAccountsChanged = (listener: () => void): (() => void) => auth.onChange(listener);
 
-export async function logoutAccount(provider: ProviderId): Promise<void> {
-  flows[provider].clear();
-  if (provider === "claude") {
-    await claudeLogout().catch(() => undefined);
-  } else {
-    await geminiLogout();
-    resetAntigravityCache();
-  }
-  removeAccount(provider);
-}
+/** Env proses Claude milik app: `CLAUDE_CONFIG_DIR` akun app, tanpa API key. */
+export const claudeEnv = (): Record<string, string | undefined> => auth.envSync("claude");
+/** Env proses agy milik app: keyring pribadi, bukan keyring desktop pemilik. */
+export const geminiEnv = (): Promise<Record<string, string | undefined>> => auth.env("gemini");
 
 /** Folder data agy versi sebelumnya (`data/antigravity`) pindah ke folder akun Gemini. */
 function migrateLegacyAgyDir(): void {
@@ -237,8 +98,11 @@ export function initAccounts(): void {
   } catch (error) {
     console.warn(`[akun] pindah folder agy lama gagal: ${(error as Error).message}`);
   }
-  if (getAccount("claude")) migrateClaudeOnce();
-  for (const provider of PROVIDER_IDS) {
-    if (getAccount(provider)) void checkAccount(provider);
-  }
+  if (auth.store.get("claude")) migrateClaudeOnce(auth.store);
+  auth.init();
+}
+
+/** Saat server berhenti: hentikan CLI login yang berjalan dan keyring pribadi Gemini. */
+export function disposeAccounts(): Promise<void> {
+  return auth.dispose();
 }

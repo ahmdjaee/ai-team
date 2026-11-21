@@ -571,7 +571,7 @@ const workspace = CONFIG.workspaceDir;
 
 // ---------- E. sesi ringan AgyChat (kurator, panel Tanya) ----------
 const { AgyChat } = await import("../server/engines/antigravity/chat.ts");
-const store = await import("../server/accounts/store.ts");
+const store = (await import("../server/accounts/index.ts")).auth.store;
 
 function chatHarness(options: Partial<ChatOptions> = {}) {
   const fake = fakeAgent();
@@ -671,7 +671,7 @@ function chatHarness(options: Partial<ChatOptions> = {}) {
 }
 {
   // agy menolak login: akun Gemini app ditandai perlu login ulang.
-  store.saveAccount("gemini", { addedAt: new Date().toISOString(), status: "ok" });
+  store.save("gemini", { addedAt: new Date().toISOString(), status: "ok" });
   const rejecting: Launcher = (options) => {
     const real = fakeAgent().launcher(options);
     return { ...real, stderrTail: () => "Error: you must sign in again" };
@@ -692,9 +692,9 @@ function chatHarness(options: Partial<ChatOptions> = {}) {
     (cause: Error) => cause.message,
   );
   check("E23 sesi gagal dimulai → galat jelas", /Antigravity gagal memulai sesi/.test(error ?? ""), error);
-  check("E24 galat login menandai akun Gemini kedaluwarsa", store.getAccount("gemini")?.status === "expired", store.getAccount("gemini"));
+  check("E24 galat login menandai akun Gemini kedaluwarsa", store.get("gemini")?.status === "expired", store.get("gemini"));
   await failing.close();
-  store.removeAccount("gemini");
+  store.remove("gemini");
 }
 
 // ---------- F. kurator & panel Tanya mengikuti akun ----------
@@ -718,7 +718,7 @@ const keyringReady = accounts.accountView("gemini").state !== "unavailable";
   };
   check("F1 tanpa akun: kurator tidak punya mesin", curatorEngine() === undefined);
   check("F2 tanpa akun: Tanya tidak punya mesin (409)", askDefaults().engine === undefined && choose({}).status === 409 && choose({}).error === ASK_NEEDS_ACCOUNT, choose({}));
-  store.saveAccount("claude", ok());
+  store.save("claude", ok());
   check("F3 akun Claude: kurator di Claude", curatorEngine() === "claude");
   check("F4 Tanya bawaan: Claude dengan MODEL_ASK", askDefaults().preferred === "claude" && askDefaults().models.claude === CONFIG.models.ask, askDefaults());
   check("F4b MODEL_ASK kosong jatuh ke model bot QA", process.env.MODEL_ASK ? true : CONFIG.models.ask === CONFIG.models.qa, CONFIG.models);
@@ -726,7 +726,7 @@ const keyringReady = accounts.accountView("gemini").state !== "unavailable";
   check("F4d mesin tanpa akun ditolak (409)", choose({ engine: "antigravity" }).status === 409, choose({ engine: "antigravity" }));
   check("F4e mesin tak dikenal ditolak (400)", choose({ engine: "gpt" }).status === 400, choose({ engine: "gpt" }));
   check("F4f id model tidak sah ditolak (400)", choose({ model: "rm -rf /" }).status === 400, choose({ model: "rm -rf /" }));
-  store.patchAccount("claude", { models: [{ id: "claude-sonnet-5-5", name: "Sonnet 5.5" }, { id: "claude-opus-5", name: "Opus 5" }] });
+  store.patch("claude", { models: [{ id: "claude-sonnet-5-5", name: "Sonnet 5.5" }, { id: "claude-opus-5", name: "Opus 5" }] });
   check("F4g model dari daftar akun dipakai", choose({ engine: "claude", model: "claude-opus-5" }).model === "claude-opus-5", choose({ engine: "claude", model: "claude-opus-5" }));
   check("F4h model di luar daftar akun ditolak (400)", choose({ model: "claude-haiku-9" }).status === 400 && /tidak ada di akun Claude/.test(String(choose({ model: "claude-haiku-9" }).error)), choose({ model: "claude-haiku-9" }));
   updateSettings({ claudeModels: { ask: "claude-opus-5" } });
@@ -746,20 +746,20 @@ const keyringReady = accounts.accountView("gemini").state !== "unavailable";
       { disallowed: opts.disallowedTools, deny },
     );
   }
-  store.patchAccount("claude", { models: [] });
+  store.patch("claude", { models: [] });
   updateSettings({ curatorEngine: "antigravity", askEngine: "antigravity" });
   check("F5 kurator dipasang ke Gemini tanpa akun Gemini → tetap Claude", curatorEngine() === "claude");
   check("F5b Tanya dipasang ke Gemini tanpa akun Gemini → Claude", askDefaults().preferred === "antigravity" && askDefaults().engine === "claude" && choose({}).engine === "claude", askDefaults());
   if (keyringReady) {
-    store.saveAccount("gemini", ok());
+    store.save("gemini", ok());
     check("F6 kurator dipasang ke Gemini dan akunnya ada → Gemini", curatorEngine() === "antigravity");
     check("F7 Tanya dipasang ke Gemini → Gemini, model bawaan agy", JSON.stringify(choose({})) === JSON.stringify({ ok: true, engine: "antigravity" }), choose({}));
     updateSettings({ geminiModels: { qa: "gemini-3.8-flash", engineer: "claude-sonnet-4-6", curator: "claude-sonnet-4-6", ask: "gemini-3.8-flash" } });
     check("F8 model Gemini Tanya dari Pengaturan; Claude tetap bisa dipilih", choose({}).model === "gemini-3.8-flash" && choose({ engine: "claude" }).engine === "claude", [choose({}), choose({ engine: "claude" })]);
-    store.patchAccount("claude", { status: "expired" });
+    store.patch("claude", { status: "expired" });
     updateSettings({ askEngine: "claude" });
     check("F9 Claude kedaluwarsa: Tanya pindah ke Gemini, Claude ditolak", askDefaults().engine === "antigravity" && choose({ engine: "claude" }).status === 409, [askDefaults(), choose({ engine: "claude" })]);
-    store.saveAccount("claude", ok());
+    store.save("claude", ok());
   } else {
     console.log("     (F6–F9 dilewati: dbus-daemon/gnome-keyring-daemon tidak ada di mesin ini)");
   }

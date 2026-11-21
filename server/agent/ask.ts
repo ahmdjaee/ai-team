@@ -5,8 +5,7 @@ import {
   type Query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { claudeEnv } from "../accounts/claude.ts";
-import { PROVIDER_LABEL, accountView, engineUsable, pickEngine, providerOf } from "../accounts/index.ts";
+import { PROVIDER_LABEL, accountView, claudeEnv, engineUsable, pickEngine, providerOf } from "../accounts/index.ts";
 import { CONFIG } from "../config.ts";
 import { AgyChat, type ChatOptions } from "../engines/antigravity/chat.ts";
 import { effortFor, getSettings, modelFor, validModelId } from "../settings.ts";
