@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, type ProjectInfo, type RoleId, type RoleInfo } from "../api.ts";
+import { api, type EngineId, type ProjectInfo, type RoleId, type RoleInfo, type SettingsView } from "../api.ts";
 import { Combobox } from "./Combobox.tsx";
+import { ENGINE_SHORT, EnginePicker, GeminiRiskNote, botDefaultModel, modelName, usableEngine, useEngines } from "./EnginePicker.tsx";
 
 export function NewTaskDialog({
   roles,
@@ -25,6 +26,26 @@ export function NewTaskDialog({
   const [targetUrl, setTargetUrl] = useState(project?.targetUrl ?? defaultTargetUrl);
   const [touchedTarget, setTouchedTarget] = useState(false);
   const [sending, setSending] = useState(false);
+  const { engines } = useEngines();
+  const [settings, setSettings] = useState<SettingsView>();
+  const [engine, setEngine] = useState<EngineId>("claude");
+  const [model, setModel] = useState<string>();
+  /** Mesin mengikuti setelan bot yang dipilih, sampai Anda memilih sendiri. */
+  const [touchedEngine, setTouchedEngine] = useState(false);
+
+  useEffect(() => {
+    void api.settings().then(setSettings, () => undefined);
+  }, []);
+
+  // Model kosong = bawaan bot; server mengisinya dari Pengaturan saat tugas dibuat. Kalau mesin
+  // bawaan bot belum punya akun, mesin lain yang siap dipakai.
+  useEffect(() => {
+    if (touchedEngine || !settings) return;
+    setEngine(usableEngine(settings.engines[role], engines));
+    setModel(undefined);
+  }, [role, settings, touchedEngine, engines]);
+  const engineReady = engines?.find((item) => item.id === engine)?.available ?? false;
+  const switched = settings && !touchedEngine && engines && engine !== settings.engines[role];
 
   // Ganti project → kolom target ikut berganti, selama Anda belum mengisinya sendiri.
   useEffect(() => {
@@ -43,6 +64,8 @@ export function NewTaskDialog({
         role,
         projectId,
         targetUrl: selected?.usesBrowser ? targetUrl.trim() || undefined : undefined,
+        engine,
+        model,
       });
       onCreated(task.id);
       onClose();
@@ -106,10 +129,38 @@ export function NewTaskDialog({
               }`}
             >
               <span className="block text-sm text-ink">{item.title}</span>
-              <span className="block font-mono text-[10px] text-muted">{item.model}</span>
+              <span className="block truncate font-mono text-[10px] text-muted">
+                {(() => {
+                  const botEngine = settings?.engines[item.id] ?? "claude";
+                  const info = engines?.find((entry) => entry.id === botEngine);
+                  const name = modelName(info?.models, botDefaultModel(settings, item.id, botEngine) ?? (botEngine === "claude" ? item.model : undefined));
+                  return `${ENGINE_SHORT[botEngine]}${name ? ` · ${name}` : ""}`;
+                })()}
+              </span>
             </button>
           ))}
         </div>
+
+        <label className="mt-3 block text-xs text-muted">Mesin</label>
+        <div className="mt-1">
+          <EnginePicker
+            engines={engines}
+            engine={engine}
+            model={model}
+            defaultModel={botDefaultModel(settings, role, engine) ?? (engine === "claude" ? selected?.model : undefined)}
+            onChange={(next, nextModel) => {
+              setTouchedEngine(true);
+              setEngine(next);
+              setModel(nextModel);
+            }}
+          />
+        </div>
+        {switched && (
+          <p className="mt-1 text-[11px] text-faint">
+            Mesin bawaan bot ini ({ENGINE_SHORT[settings.engines[role]]}) belum punya akun, jadi tugas ini memakai {ENGINE_SHORT[engine]}.
+          </p>
+        )}
+        {engine === "antigravity" && <GeminiRiskNote className="mt-1" />}
 
         {selected?.usesBrowser && (
           <>
@@ -133,7 +184,8 @@ export function NewTaskDialog({
           </button>
           <button
             onClick={() => void submit()}
-            disabled={!title.trim() || sending}
+            disabled={!title.trim() || sending || !engineReady}
+            title={engineReady ? undefined : "Mesin ini belum punya akun yang siap — lihat Pengaturan → Akun AI"}
             className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover disabled:opacity-40"
           >
             Buat & jalankan

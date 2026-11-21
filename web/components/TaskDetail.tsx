@@ -8,6 +8,8 @@ import {
   api,
   type RoleId,
   type AutonomyMode,
+  type EngineId,
+  type SettingsView,
   type ContextUsage,
   type RoleInfo,
   type TaskDetail as TaskDetailData,
@@ -17,6 +19,7 @@ import { formatTokens } from "../activity.ts";
 import { projectPath, type Tab } from "../routes.tsx";
 import { useTaskThread } from "../useTaskThread.ts";
 import { AskPanel } from "./AskPanel.tsx";
+import { ENGINE_SHORT, EnginePicker, GeminiRiskNote, botDefaultModel, modelName, usableEngine, useEngines } from "./EnginePicker.tsx";
 import { Attachments } from "./Attachments.tsx";
 import { Diff } from "./Diff.tsx";
 import { LiveView, lastBrowserAction } from "./LiveView.tsx";
@@ -24,6 +27,7 @@ import { TaskNotes } from "./TaskNotes.tsx";
 import { TaskReport } from "./TaskReport.tsx";
 import { TaskSettings } from "./TaskSettings.tsx";
 import { TaskThread } from "./TaskThread.tsx";
+import { Select } from "./Select.tsx";
 
 const ASK_KEY = "ai-team-ask";
 
@@ -45,6 +49,23 @@ function HandoffDialog({
   );
   const [note, setNote] = useState(preset?.note ?? "");
   const [sending, setSending] = useState(false);
+  const { engines } = useEngines();
+  const [settings, setSettings] = useState<SettingsView>();
+  const [engine, setEngine] = useState<EngineId>("claude");
+  const [model, setModel] = useState<string>();
+  /** Bawaan = setelan bot tujuan; berhenti mengikuti begitu Anda memilih sendiri. */
+  const [touchedEngine, setTouchedEngine] = useState(false);
+
+  useEffect(() => {
+    void api.settings().then(setSettings, () => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (touchedEngine || !settings) return;
+    setEngine(usableEngine(settings.engines[role], engines));
+    setModel(undefined);
+  }, [role, settings, touchedEngine, engines]);
+  const engineReady = engines?.find((item) => item.id === engine)?.available ?? false;
 
   return (
     <div className="fixed inset-0 z-20 grid place-items-center bg-scrim p-4" onClick={onClose}>
@@ -73,16 +94,37 @@ function HandoffDialog({
           placeholder="Catatan operan: apa yang harus dikerjakan bot berikutnya"
           className="mt-3 w-full rounded-lg border border-line bg-page p-2 text-sm text-ink outline-none focus:border-accent"
         />
+        <label className="mt-2 block text-xs text-muted">Mesin bot tujuan</label>
+        <div className="mt-1">
+          <EnginePicker
+            engines={engines}
+            engine={engine}
+            model={model}
+            defaultModel={botDefaultModel(settings, role, engine) ?? (engine === "claude" ? roles.find((item) => item.id === role)?.model : undefined)}
+            onChange={(next, nextModel) => {
+              setTouchedEngine(true);
+              setEngine(next);
+              setModel(nextModel);
+            }}
+          />
+        </div>
+        {engine === "antigravity" && <GeminiRiskNote className="mt-1" />}
         <div className="mt-3 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">
             Batal
           </button>
           <button
-            disabled={sending}
+            disabled={sending || !engineReady}
+            title={engineReady ? undefined : "Mesin ini belum punya akun yang siap — lihat Pengaturan → Akun AI"}
             onClick={async () => {
               setSending(true);
               try {
-                await api.handoff(detail.task.id, { role, note: note.trim() || undefined });
+                await api.handoff(detail.task.id, {
+                  role,
+                  note: note.trim() || undefined,
+                  engine,
+                  model,
+                });
                 onDone();
                 onClose();
               } catch (error) {
@@ -97,6 +139,36 @@ function HandoffDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Mesin penugasan yang sedang berjalan. Claude tanpa lencana supaya header tugas lama tidak
+ * berubah, kecuali akunnya bermasalah — lencananya lalu memberi tahu kenapa tugas tertahan.
+ */
+function EngineBadge({ engine = "claude", model }: { engine?: EngineId; model?: string }) {
+  const { engines } = useEngines();
+  const info = engines?.find((item) => item.id === engine);
+  const name = modelName(info?.models, model);
+  if (info && !info.available) {
+    return (
+      <Link
+        to="/settings"
+        title={info.reason}
+        className="rounded bg-tag-yellow px-1.5 py-0.5 text-[11px] text-tag-yellow-ink hover:underline"
+      >
+        {ENGINE_SHORT[engine]} · akun belum siap
+      </Link>
+    );
+  }
+  if (engine === "claude") return null;
+  return (
+    <span
+      title={`Penugasan ini berjalan di ${ENGINE_SHORT[engine]} (Antigravity CLI)${name ? ` · model ${name}` : " · model bawaan agy"}`}
+      className="rounded bg-tag-blue px-1.5 py-0.5 text-[11px] text-tag-blue-ink"
+    >
+      {ENGINE_SHORT[engine]}
+    </span>
   );
 }
 
@@ -345,18 +417,19 @@ export function TaskDetail({
           {task.costUsd > 0 && <span className="shrink-0 text-xs text-faint">${task.costUsd.toFixed(4)}</span>}
           <ContextMeter usage={liveContext ?? task.assignments.at(-1)?.context} />
           <div className="ml-auto flex shrink-0 items-center gap-2 text-xs">
-            <select
+            <EngineBadge engine={task.assignments.at(-1)?.engine} model={task.assignments.at(-1)?.model} />
+            <Select
               value={detail.mode}
-              onChange={(e) => void api.setMode(task.id, e.target.value as AutonomyMode).then(onChanged)}
+              onChange={(value) => void api.setMode(task.id, value as AutonomyMode).then(onChanged)}
+              ariaLabel="Mode tugas"
               title={MODE_NOTE[detail.mode]}
-              className="rounded-lg border border-line bg-page px-2 py-1 text-muted"
-            >
-              {(["auto", "ask", "readonly"] as AutonomyMode[]).map((mode) => (
-                <option key={mode} value={mode}>
-                  Mode: {MODE_LABEL[mode]}
-                </option>
-              ))}
-            </select>
+              muted
+              options={(["auto", "ask", "readonly"] as AutonomyMode[]).map((mode) => ({
+                value: mode,
+                label: `Mode: ${MODE_LABEL[mode]}`,
+                description: MODE_NOTE[mode],
+              }))}
+            />
             {busy && (
               <button
                 onClick={() => void api.interrupt(task.id).then(onChanged)}

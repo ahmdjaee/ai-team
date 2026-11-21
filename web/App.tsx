@@ -10,6 +10,7 @@ import {
   type TaskListItem,
   type TaskStatus,
 } from "./api.ts";
+import { accountReady, useAccounts } from "./accounts.ts";
 import { NewProjectDialog } from "./components/NewProjectDialog.tsx";
 import { NewTaskDialog } from "./components/NewTaskDialog.tsx";
 import { ProjectPicker } from "./components/ProjectPicker.tsx";
@@ -222,6 +223,12 @@ export function App() {
     [tasks, tasksLoaded, roles, projects, refreshKey, refresh, onSettingsSaved],
   );
 
+  // Mesin mengikuti akun: tanpa satu pun akun siap, tugas baru tidak bisa dibuat.
+  const accounts = useAccounts();
+  const noAccount = accounts !== undefined && !accounts.some(accountReady);
+  const newTaskBlocked = noAccount ? "Tambahkan akun Claude atau Gemini dulu di Pengaturan → Akun AI" : undefined;
+  const openSettings = () => navigate(`/settings${keepFilters(search)}`);
+
   const onSelectTask = useCallback((id: string) => navigate(taskPath(id, undefined, search)), [navigate, search]);
   const onFilterRole = useCallback((value: string) => setFilter("role", value), [setFilter]);
   const onFilterStatus = useCallback((value: string) => setFilter("status", value), [setFilter]);
@@ -245,9 +252,10 @@ export function App() {
             </button>
             <button
               onClick={() => setCreating(true)}
-              title="Tugas baru"
+              disabled={Boolean(newTaskBlocked)}
+              title={newTaskBlocked ?? "Tugas baru"}
               aria-label="Tugas baru"
-              className="rounded-lg bg-accent px-2.5 py-1 text-sm font-medium text-on-accent hover:bg-accent-hover"
+              className="rounded-lg bg-accent px-2.5 py-1 text-sm font-medium text-on-accent hover:bg-accent-hover disabled:opacity-40"
             >
               +
             </button>
@@ -267,7 +275,9 @@ export function App() {
             </div>
             <button
               onClick={() => setCreating(true)}
-              className="ml-auto rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover"
+              disabled={Boolean(newTaskBlocked)}
+              title={newTaskBlocked}
+              className="ml-auto rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover disabled:opacity-40"
             >
               + Tugas
             </button>
@@ -357,8 +367,23 @@ export function App() {
         )}
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-hidden">
-        <Outlet context={context} />
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {noAccount && location.pathname !== "/settings" && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-tag-yellow px-4 py-2 text-sm text-tag-yellow-ink">
+            <span className="min-w-0 flex-1">
+              Belum ada akun AI. Tambahkan akun Claude atau Gemini untuk mulai menugaskan bot.
+            </span>
+            <button
+              onClick={openSettings}
+              className="rounded-lg bg-accent px-3 py-1 text-xs font-medium text-on-accent hover:bg-accent-hover"
+            >
+              Tambah akun
+            </button>
+          </div>
+        )}
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <Outlet context={context} />
+        </div>
       </main>
 
       {creatingProject && (

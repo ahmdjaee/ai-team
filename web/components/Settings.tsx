@@ -1,26 +1,37 @@
 import { useEffect, useState } from "react";
-import { MODE_LABEL, MODE_NOTE, api, type AutonomyMode, type RoleInfo, type Settings as SettingsData } from "../api.ts";
+import { api, type RoleInfo, type SettingsView, type TaskListItem } from "../api.ts";
+import type { SettingsPatch } from "../../server/settings.ts";
+import { useEngines } from "../accounts.ts";
+import { AccountsSection } from "./AccountsSection.tsx";
+import { BotSettings } from "./BotSettings.tsx";
 import { permissionState, requestPermission } from "../notifications.ts";
 
-const MODES: AutonomyMode[] = ["auto", "ask", "readonly"];
-
-const NOTIF_LABEL: Array<[keyof SettingsData["notifications"], string]> = [
+const NOTIF_LABEL: Array<[keyof SettingsView["notifications"], string]> = [
   ["approval", "Kartu persetujuan muncul"],
   ["question", "Agen bertanya"],
   ["needsReview", "Tugas selesai & perlu dibaca"],
   ["failed", "Tugas gagal"],
 ];
 
-export function Settings({ roles, onSaved }: { roles: RoleInfo[]; onSaved: (settings: SettingsData) => void }) {
-  const [settings, setSettings] = useState<SettingsData>();
+export function Settings({
+  roles,
+  tasks,
+  onSaved,
+}: {
+  roles: RoleInfo[];
+  tasks: TaskListItem[];
+  onSaved: (settings: SettingsView) => void;
+}) {
+  const [settings, setSettings] = useState<SettingsView>();
   const [permission, setPermission] = useState(permissionState());
   const [saving, setSaving] = useState(false);
+  const { engines } = useEngines();
 
   useEffect(() => {
     void api.settings().then(setSettings);
   }, []);
 
-  const save = async (patch: Partial<SettingsData>) => {
+  const save = async (patch: SettingsPatch) => {
     setSaving(true);
     try {
       const next = await api.saveSettings(patch);
@@ -36,44 +47,16 @@ export function Settings({ roles, onSaved }: { roles: RoleInfo[]; onSaved: (sett
   if (!settings) return <p className="p-6 text-sm text-faint">Memuat pengaturan…</p>;
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5">
+    <div className="h-full overflow-y-auto px-4 py-5 sm:px-6">
       <h2 className="text-sm font-semibold text-ink">Pengaturan</h2>
 
-      <section className="mt-5">
-        <h3 className="text-xs uppercase tracking-wide text-muted">Mode bawaan tiap bot</h3>
-        <p className="mt-1 text-xs text-faint">
-          Berlaku untuk tugas baru. Tugas yang sudah berjalan diubah lewat pemilih Mode di header tugasnya.
-        </p>
-        <div className="mt-3 space-y-2">
-          {roles.map((role) => (
-            <div key={role.id} className="flex items-center gap-3 rounded-lg border border-line bg-panel px-3 py-2">
-              <span className="w-44 shrink-0 text-sm text-ink">{role.title}</span>
-              <div className="flex flex-wrap gap-1">
-                {MODES.map((mode) => (
-                  <button
-                    key={mode}
-                    disabled={saving}
-                    onClick={() => void save({ modes: { ...settings.modes, [role.id]: mode } })}
-                    title={MODE_NOTE[mode]}
-                    className={`rounded-lg border px-2.5 py-1 text-xs ${
-                      settings.modes[role.id] === mode
-                        ? "border-accent bg-accent-soft text-accent-ink"
-                        : "border-line text-muted hover:border-line-strong"
-                    }`}
-                  >
-                    {MODE_LABEL[mode]}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-        <p className="mt-2 text-xs text-faint">
-          Di mode <strong className="text-muted">Auto</strong>, empat kategori ini tetap memunculkan kartu persetujuan:
-          service &amp; container, data &amp; database, kredensial/firewall/akses, hapus berkas &amp; paket. Perintah
-          katastrofik tetap ditolak tanpa bisa disetujui.
-        </p>
-      </section>
+      <div className="mt-5">
+        <AccountsSection tasks={tasks} />
+      </div>
+
+      <div className="mt-7">
+        <BotSettings roles={roles} settings={settings} engines={engines} saving={saving} save={(patch) => void save(patch)} />
+      </div>
 
       <section className="mt-7">
         <div className="flex items-center gap-3">

@@ -4,6 +4,7 @@ import {
   api,
   attachmentUrl,
   isImageFile,
+  type EngineId,
   type StoredEvent,
   type TaskStatus,
   type UiEvent,
@@ -11,6 +12,7 @@ import {
 } from "../api.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { ApprovalCard, QuestionCard, ToolCall } from "./Cards.tsx";
+import { ENGINE_SHORT } from "./EnginePicker.tsx";
 
 const ROLE_LABEL: Record<string, string> = {
   qa: "QA",
@@ -147,7 +149,9 @@ function renderRow(event: StoredEvent, resolved: Set<string>, results: Map<strin
     case "handoff":
       return (
         <p key={key} className="rounded-lg border border-line bg-tag-blue px-3 py-2 text-xs text-tag-blue-ink">
-          Dioper: {ROLE_LABEL[event.from] ?? event.from} → {ROLE_LABEL[event.to] ?? event.to}
+          Dioper: {ROLE_LABEL[event.from] ?? event.from}
+          {engineTag(event.fromEngine, event.toEngine, event.fromEngine)} → {ROLE_LABEL[event.to] ?? event.to}
+          {engineTag(event.fromEngine, event.toEngine, event.toEngine)}
           {event.note ? ` · ${event.note}` : ""}
         </p>
       );
@@ -155,7 +159,8 @@ function renderRow(event: StoredEvent, resolved: Set<string>, results: Map<strin
       return (
         <p key={key} className="border-t border-line pt-2 text-[11px] text-faint">
           {event.interrupted ? "dihentikan" : event.subtype}
-          {event.background ? " · dimulai CLI" : ""} · {event.numTurns} turn · {(event.durationMs / 1000).toFixed(0)}s
+          {event.background ? " · dimulai agen sendiri" : ""} · {event.numTurns} turn · {(event.durationMs / 1000).toFixed(0)}s
+          {event.tokens !== undefined ? ` · ${formatTokens(event.tokens)} token` : ""}
           {/* costUsd = total berjalan sesi; event lama belum punya biaya per turn. */}
           {event.turnCostUsd !== undefined
             ? ` · $${event.turnCostUsd.toFixed(4)}`
@@ -173,6 +178,12 @@ function renderRow(event: StoredEvent, resolved: Set<string>, results: Map<strin
     default:
       return null;
   }
+}
+
+/** Label mesin di baris operan — hanya kalau salah satu sisinya bukan Claude, supaya operan lama tetap ringkas. */
+function engineTag(from: EngineId | undefined, to: EngineId | undefined, side: EngineId | undefined): string {
+  if ((from ?? "claude") === "claude" && (to ?? "claude") === "claude") return "";
+  return ` (${ENGINE_SHORT[side ?? "claude"]})`;
 }
 
 /** Timer hidup di sini: tick per detik tidak boleh me-render ulang seluruh thread. */

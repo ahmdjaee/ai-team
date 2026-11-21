@@ -2,7 +2,8 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import express, { Router } from "express";
 import { curator } from "../agent/curator.ts";
-import { scheduler } from "../agent/scheduler.ts";
+import { resolveEngine, scheduler } from "../agent/scheduler.ts";
+import { ENGINE_LABEL, engineUsable } from "../engines/index.ts";
 import { BOUNDARY, live } from "../browser/live.ts";
 import { CONFIG } from "../config.ts";
 import { getDeleted } from "../deleted-tasks.ts";
@@ -38,8 +39,8 @@ import {
   updateTask,
   type TaskStatus,
 } from "../tasks.ts";
-import type { AutonomyMode } from "../types.ts";
-import { defaultModeFor } from "../settings.ts";
+import { isEngineId, type AutonomyMode, type EngineId } from "../types.ts";
+import { defaultEngineFor, defaultModeFor, effortFor, modelFor, validModelId } from "../settings.ts";
 
 export const tasksRouter = Router();
 
@@ -58,7 +59,9 @@ tasksRouter.get("/roles", (_req, res) => {
       id,
       title: ROLES[id].title,
       blurb: ROLES[id].blurb,
-      model: ROLES[id].model,
+      model: modelFor(id, "claude"),
+      effort: effortFor(id),
+      engine: defaultEngineFor(id),
       producesReport: ROLES[id].producesReport,
       usesBrowser: ROLES[id].usesBrowser,
     })),
@@ -75,6 +78,16 @@ tasksRouter.get("/tasks", (req, res) => {
   const tasks = listTasks({ role, status, project }).map((task) => ({ ...task, live: live.state(task.id).active }));
   res.json({ tasks, slots: scheduler.stats() });
 });
+
+/** `engine`/`model` opsional dari body; `error` kalau nilainya ada tapi tidak dikenal. */
+function engineChoice(body: unknown): { engine?: EngineId; model?: string; error?: string } {
+  const raw = (body ?? {}) as { engine?: unknown; model?: unknown };
+  if (raw.engine !== undefined && raw.engine !== null && raw.engine !== "" && !isEngineId(raw.engine)) {
+    return { error: "mesin tidak dikenal" };
+  }
+  const model = typeof raw.model === "string" && validModelId(raw.model.trim()) ? raw.model.trim() : undefined;
+  return { engine: isEngineId(raw.engine) ? raw.engine : undefined, model };
+}
 
 tasksRouter.post("/tasks", (req, res) => {
   const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
@@ -97,7 +110,19 @@ tasksRouter.post("/tasks", (req, res) => {
         ? project.targetUrl || CONFIG.targetUrl || undefined
         : undefined;
 
-  const task = createTask({ title, description: description || title, role, projectId: project.id, targetUrl });
+  const choice = engineChoice(req.body);
+  if (choice.error) {
+    res.status(400).json({ error: choice.error });
+    return;
+  }
+  const { engine, model } = resolveEngine(role, choice.engine, choice.model);
+  const usable = engineUsable(engine);
+  if (!usable.ok) {
+    res.status(409).json({ error: `${ENGINE_LABEL[engine]} belum bisa dipakai: ${usable.reason}` });
+    return;
+  }
+
+  const task = createTask({ title, description: description || title, role, projectId: project.id, targetUrl, engine, model });
   scheduler.start(task);
   res.json({ task });
 });
@@ -324,13 +349,20 @@ tasksRouter.post("/tasks/:id/message", (req, res) => {
     res.status(400).json({ error: "text wajib diisi" });
     return;
   }
-  const agentText = composeAttachmentMessage(req.params.id, text, attachments);
-  if (!scheduler.send(req.params.id, agentText, { display: text, attachments })) {
+  const task = getTask(req.params.id);
+  if (!task) {
     res.status(404).json({ error: "tugas tidak ditemukan" });
     return;
   }
+  const blocked = scheduler.blockedReason(task);
+  if (blocked) {
+    // Draf tetap disimpan: pesannya bisa dikirim ulang setelah akunnya siap.
+    res.status(409).json({ error: `Pesan belum bisa dikirim: ${blocked}` });
+    return;
+  }
+  scheduler.send(task.id, composeAttachmentMessage(task.id, text, attachments), { display: text, attachments });
   // Sudah terkirim: draf dibersihkan di sini, jadi simpan-otomatis yang telat tidak menghidupkannya lagi di browser lain.
-  writeDraft(req.params.id, {});
+  writeDraft(task.id, {});
   res.json({ ok: true });
 });
 
@@ -374,7 +406,18 @@ tasksRouter.post("/tasks/:id/handoff", async (req, res) => {
     return;
   }
   const note = typeof req.body?.note === "string" ? req.body.note.trim() : undefined;
-  const task = await scheduler.handoff(req.params.id, role, note);
+  const choice = engineChoice(req.body);
+  if (choice.error) {
+    res.status(400).json({ error: choice.error });
+    return;
+  }
+  const resolved = resolveEngine(role, choice.engine, choice.model);
+  const usable = engineUsable(resolved.engine);
+  if (!usable.ok) {
+    res.status(409).json({ error: `${ENGINE_LABEL[resolved.engine]} belum bisa dipakai: ${usable.reason}` });
+    return;
+  }
+  const task = await scheduler.handoff(req.params.id, role, note, resolved);
   if (!task) {
     res.status(404).json({ error: "tugas tidak ditemukan" });
     return;
@@ -394,6 +437,11 @@ tasksRouter.post("/tasks/:id/review", (req, res) => {
 
   if (status === "changes_requested" && !comment) {
     res.status(400).json({ error: "komentar wajib diisi kalau meminta perbaikan" });
+    return;
+  }
+  const blocked = status === "changes_requested" && sendBack ? scheduler.blockedReason(task) : undefined;
+  if (blocked) {
+    res.status(409).json({ error: `Review belum bisa dikirim ke bot: ${blocked}` });
     return;
   }
 

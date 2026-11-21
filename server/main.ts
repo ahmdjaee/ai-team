@@ -2,13 +2,19 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
+import { accountViews, initAccounts } from "./accounts/index.ts";
+import { stopGeminiKeyring } from "./accounts/keyring.ts";
 import { askHub } from "./agent/ask.ts";
 import { curator } from "./agent/curator.ts";
 import { scheduler } from "./agent/scheduler.ts";
 import { CONFIG, ensureDirs } from "./config.ts";
 import { httpGuard } from "./http-guard.ts";
+import { mcpRouter } from "./mcp-http.ts";
+import { enginesRouter, registerEngines } from "./engines/index.ts";
+import { agyHookRouter } from "./engines/antigravity/hooks.ts";
 import { attachRealtime } from "./realtime.ts";
 import { closeOrphanRequests } from "./recover.ts";
+import { accountsRouter } from "./routes/accounts.ts";
 import { approvalsRouter } from "./routes/approvals.ts";
 import { askRouter } from "./routes/ask.ts";
 import { healthRouter } from "./routes/health.ts";
@@ -18,11 +24,13 @@ import { settingsRouter } from "./routes/settings.ts";
 import { tasksRouter } from "./routes/tasks.ts";
 import { workspaceRouter } from "./routes/workspace.ts";
 import { loadTasks } from "./tasks.ts";
+import { modelFor } from "./settings.ts";
 import { adoptOrphanTasks } from "./context.ts";
 import { ensureDefaultProject, listProjects, loadProjects } from "./projects.ts";
 import { migrateProjects } from "../scripts/migrate-projects.ts";
 
 ensureDirs();
+registerEngines();
 // Urutan penting: migrasi membaca tugas lama, lalu project dimuat, lalu tugas yatim diadopsi.
 loadTasks();
 const migration = migrateProjects();
@@ -30,6 +38,8 @@ loadProjects();
 loadTasks();
 ensureDefaultProject();
 const adopted = adoptOrphanTasks();
+// Setelah tugas dimuat: salinan transkrip sesi dari ~/.claude membaca penugasan tugas.
+initAccounts();
 const orphans = closeOrphanRequests();
 curator.watch();
 
@@ -39,7 +49,9 @@ const app = express();
 // Pagar Host/Origin dulu: permintaan dari situs lain tidak boleh sampai membaca body sekalipun.
 app.use("/api", httpGuard);
 app.use(express.json({ limit: "20mb" }));
-app.use("/api", tasksRouter, askRouter, projectsRouter, approvalsRouter, memoryRouter, settingsRouter, workspaceRouter, healthRouter);
+app.use("/api", tasksRouter, askRouter, projectsRouter, approvalsRouter, memoryRouter, settingsRouter, workspaceRouter, healthRouter, accountsRouter);
+// Jalur internal untuk mesin Antigravity: server MCP lewat HTTP dan hook PreToolUse `agy`.
+app.use("/api", enginesRouter, mcpRouter, agyHookRouter);
 
 // Aplikasi demo kecil sebagai target uji QA (sengaja punya cacat untuk ditemukan).
 // Berkasnya ada di dalam workspace supaya Engineer bisa memperbaikinya seperti kode proyek biasa.
@@ -72,7 +84,9 @@ const server = app.listen(CONFIG.port, CONFIG.host, () => {
   console.log(`  project   : ${listProjects().map((project) => project.id).join(", ")}`);
   console.log(`  workspace : ${CONFIG.workspaceDir} (bawaan; project boleh punya sendiri)`);
   console.log(`  data      : ${CONFIG.dataDir}`);
-  console.log(`  model     : qa=${CONFIG.models.qa} engineer=${CONFIG.models.engineer} devops=${CONFIG.models.devops} uiux=${CONFIG.models.uiux}`);
+  const models = (["qa", "engineer", "devops", "uiux"] as const).map((role) => `${role}=${modelFor(role, "claude")}`).join(" ");
+  console.log(`  model     : ${models} (Claude, dari Pengaturan atau .env)`);
+  console.log(`  akun      : ${accountViews().map((account) => `${account.label} ${account.state}`).join(", ")}`);
   const resumed = scheduler.resumePending();
   if (resumed > 0) console.log(`  ${resumed} tugas yang sempat berjalan dilanjutkan`);
   curator.catchUp();
@@ -82,9 +96,8 @@ const realtime = attachRealtime(server);
 async function shutdown(signal: string): Promise<void> {
   console.log(`\n${signal} — menutup sesi agen…`);
   realtime.close();
-  askHub.closeAll();
-  curator.closeAll();
-  await scheduler.closeAll();
+  await Promise.all([askHub.closeAll(), curator.closeAll(), scheduler.closeAll()]);
+  await stopGeminiKeyring();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3_000).unref();
 }

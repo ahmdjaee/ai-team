@@ -1,10 +1,15 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { api, type AskMessage } from "../api.ts";
+import { Link } from "react-router-dom";
+import { api, type AskDefaults, type AskMessage, type EngineId } from "../api.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { subscribe } from "../realtime.ts";
+import { ENGINE_SHORT, EnginePicker, modelName, usableEngine, useEngines } from "./EnginePicker.tsx";
 
-type AskSnapshot = { messages: AskMessage[]; busy: boolean; costUsd: number; models: { id: string; label: string }[] };
-/** Topik `ask:<id>`: snapshot dulu (juga tiap tersambung ulang), lalu aliran jawaban. Tidak ada yang ditulis ke disk. */
+type AskSnapshot = { messages: AskMessage[]; busy: boolean; costUsd: number; defaults: AskDefaults };
+/**
+ * Topik `ask:<id>`: snapshot dulu (juga tiap tersambung ulang), lalu aliran jawaban. Tidak ada yang ditulis ke disk.
+ * Mesin dan daftar model dibaca dari akun (`useEngines`), jadi ikut berubah saat Anda login atau keluar.
+ */
 type AskStreamEvent =
   | ({ type: "snapshot" } & AskSnapshot)
   | { type: "delta"; text: string }
@@ -32,9 +37,33 @@ function readWidth(): number {
 }
 
 /**
- * Panel Tanya (incognito): sesi Claude terpisah yang tahu seluk-beluk satu tugas,
+ * Mesin + model yang dipilih di panel, diingat selama tab ini terbuka (juga saat pindah tugas). Kosong =
+ * bawaan Pengaturan → Bot (baris Panel Tanya); model kosong = model bawaan Tanya di mesin itu.
+ */
+type Choice = { engine?: EngineId; model?: string };
+let lastChoice: Choice = {};
+
+/**
+ * Panel Tanya (incognito): sesi Claude atau Gemini terpisah yang tahu seluk-beluk satu tugas,
  * tapi tidak pernah menulis ke percakapan tugas itu dan tidak tersimpan di disk.
  */
+/** Mesin · model · biaya di bawah jawaban. Nama model diambil dari daftar akun kalau ada. */
+function AnswerMeta({ message }: { message: AskMessage }) {
+  const { engines } = useEngines();
+  const models = engines?.find((item) => item.id === message.engine)?.models;
+  const parts = [
+    message.engine ? ENGINE_SHORT[message.engine] : undefined,
+    modelName(models, message.model),
+    message.costUsd !== undefined ? `$${message.costUsd.toFixed(4)}` : undefined,
+  ].filter(Boolean);
+  if (parts.length === 0) return null;
+  return (
+    <p className="mt-1 text-[10px] text-faint" title={message.model}>
+      {parts.join(" · ")}
+    </p>
+  );
+}
+
 /** Jawaban di-parse sekali per isi — setiap token streaming tidak merender ulang seluruh riwayat. */
 const AskAnswer = memo(function AskAnswer({ text, dim }: { text: string; dim?: boolean }) {
   const html = useMemo(() => renderMarkdown(text), [text]);
@@ -43,8 +72,9 @@ const AskAnswer = memo(function AskAnswer({ text, dim }: { text: string; dim?: b
 
 export const AskPanel = memo(function AskPanel({ taskId, onClose }: { taskId: string; onClose: () => void }) {
   const [messages, setMessages] = useState<AskMessage[]>([]);
-  const [models, setModels] = useState<{ id: string; label: string }[]>([]);
-  const [model, setModel] = useState("");
+  const [defaults, setDefaults] = useState<AskDefaults>();
+  const [choice, setChoice] = useState<Choice>(() => lastChoice);
+  const { engines } = useEngines();
   const [cost, setCost] = useState(0);
   const [busy, setBusy] = useState(false);
   const [streaming, setStreaming] = useState("");
@@ -89,8 +119,7 @@ export const AskPanel = memo(function AskPanel({ taskId, onClose }: { taskId: st
     };
     const apply = (data: AskSnapshot) => {
       setMessages(data.messages);
-      setModels(data.models);
-      setModel((current) => current || data.models[0]?.id || "");
+      setDefaults(data.defaults);
       setCost(data.costUsd);
       setBusy(data.busy);
     };
@@ -149,14 +178,29 @@ export const AskPanel = memo(function AskPanel({ taskId, onClose }: { taskId: st
     if (stick.current) bottom.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [messages.length, streaming]);
 
+  // Tanpa akun AI yang siap tidak ada yang bisa menjawab; undefined = belum dimuat.
+  const noEngine = engines !== undefined && !engines.some((item) => item.available);
+  // Mesin yang dipakai: pilihan panel, lalu bawaan Pengaturan; kalau akunnya belum siap, mesin lain yang siap.
+  const engine = usableEngine(choice.engine ?? defaults?.preferred ?? "claude", engines);
+  const engineModels = engines?.find((item) => item.id === engine)?.models ?? [];
+  // Model pilihan hanya berlaku untuk mesinnya dan selama masih ada di daftar akun.
+  const model =
+    choice.engine === engine && choice.model && (engineModels.length === 0 || engineModels.some((item) => item.id === choice.model))
+      ? choice.model
+      : undefined;
+  const pick = (next: EngineId, nextModel?: string) => {
+    lastChoice = { engine: next, model: nextModel };
+    setChoice(lastChoice);
+  };
+
   const send = async () => {
     const value = text.trim();
-    if (!value || busy) return;
+    if (!value || busy || noEngine) return;
     setText("");
     setError(undefined);
     setMessages((previous) => [...previous, { role: "user", text: value, ts: new Date().toISOString() }]);
     try {
-      await api.ask(taskId, { text: value, model });
+      await api.ask(taskId, { text: value, engine, model });
     } catch (cause) {
       setError((cause as Error).message);
     }
@@ -238,9 +282,7 @@ export const AskPanel = memo(function AskPanel({ taskId, onClose }: { taskId: st
           ) : (
             <div key={`${message.ts}-${index}`}>
               <AskAnswer text={message.text} />
-              {message.costUsd !== undefined && (
-                <p className="mt-1 text-[10px] text-faint">${message.costUsd.toFixed(4)}</p>
-              )}
+              <AnswerMeta message={message} />
             </div>
           ),
         )}
@@ -261,26 +303,37 @@ export const AskPanel = memo(function AskPanel({ taskId, onClose }: { taskId: st
             }
           }}
           rows={2}
-          placeholder="Tanya soal tugas ini… (Enter kirim)"
-          className="w-full resize-none rounded-xl border border-line bg-page px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+          disabled={noEngine}
+          placeholder={noEngine ? "Belum ada akun AI untuk menjawab" : "Tanya soal tugas ini… (Enter kirim)"}
+          className="w-full resize-none rounded-xl border border-line bg-page px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
         />
-        <div className="mt-2 flex items-center gap-2">
-          <select
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            title="Model untuk pertanyaan berikutnya"
-            className="min-w-0 flex-1 truncate rounded-lg border border-line bg-page px-2 py-1 text-[11px] text-muted"
-          >
-            {models.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label}
-              </option>
-            ))}
-          </select>
+        {noEngine && (
+          <p className="mt-1 text-[11px] text-tag-yellow-ink">
+            Tanya butuh akun Claude atau Gemini —{" "}
+            <Link to="/settings" className="underline hover:text-ink">
+              tambahkan di Pengaturan → Akun AI
+            </Link>
+            .
+          </p>
+        )}
+        <div className="mt-2 flex items-end gap-2">
+          {!noEngine && (
+            <div className="min-w-0 flex-1" title="Mesin dan model untuk pertanyaan berikutnya">
+              <EnginePicker
+                size="sm"
+                engines={engines}
+                engine={engine}
+                model={model}
+                defaultModel={defaults?.models[engine]}
+                defaultLabel="Bawaan Tanya"
+                onChange={pick}
+              />
+            </div>
+          )}
           <button
             onClick={() => void send()}
-            disabled={busy || !text.trim()}
-            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover disabled:opacity-40"
+            disabled={busy || noEngine || !text.trim()}
+            className="ml-auto shrink-0 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover disabled:opacity-40"
           >
             Kirim
           </button>

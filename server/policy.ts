@@ -21,6 +21,13 @@ export type PolicyContext = {
   taskDir?: string;
   /** `false` menolak `git commit` karena pemilik belum memintanya; `undefined` melewati gerbang ini. */
   commitRequested?: boolean;
+  /**
+   * Folder yang tidak boleh disentuh perintah apa pun (dibaca, ditulis, atau disebut): akun AI milik
+   * app, data agy milik AI Team, ~/.gemini pribadi, dan kode hook Antigravity. Akun berisi token;
+   * sisanya menentukan pagar mesin Antigravity, jadi agen yang membacanya bisa menyusun perintah
+   * yang lolos, dan yang menulisnya bisa mematikannya.
+   */
+  protectedPaths?: string[];
 };
 
 type Rule = { test: RegExp; reason: string; category?: PolicyCategory };
@@ -43,6 +50,14 @@ const DENY: Rule[] = [
   { test: /\bchmod\s+(?:-[\w-]+\s+)*777\s+\/(\s|$)/, reason: "membuka izin seluruh root" },
   { test: /\bDROP\s+DATABASE\b/i, reason: "menghapus database" },
   { test: />\s*\/dev\/(sd|nvme|hd|vd)\w/, reason: "menimpa perangkat disk" },
+  // Data dan login Antigravity pribadi pemilik, setara ~/.claude.
+  { test: /(?:~|\$\{?HOME\}?)\/\.gemini(?=[\/\s'"`;&|)]|$)/, reason: "menyentuh folder ~/.gemini milik pemilik" },
+  // Akun AI milik app: folder login Claude, token, keyring Google, dan perintah login/logout.
+  { test: /\bCLAUDE_CONFIG_DIR\b/, reason: "menyentuh folder login Claude milik app" },
+  { test: /\.credentials\.json\b/, reason: "menyentuh berkas kredensial Claude" },
+  { test: /\bclaude\s+(?:auth|setup-token)\b/, reason: "mengubah atau membaca login Claude" },
+  { test: /\bagy\b[^;&|\n]*\s--?(?:login|logout)\b/, reason: "mengubah login Antigravity" },
+  { test: /\b(?:secret-tool|gnome-keyring-daemon|gdbus|dbus-send|busctl|qdbus)\b/, reason: "menyentuh keyring atau D-Bus" },
 ];
 
 /** Tetap memunculkan kartu persetujuan, walau mode auto. */
@@ -106,6 +121,17 @@ const ASK: Rule[] = [
   { test: /\bchown\b/, reason: "mengubah kepemilikan berkas", category: "files" },
 
 ];
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Path yang disebut utuh, berakhir di batas segmen: `/a/b` cocok dengan `/a/b/c` tapi tidak `/a/bc`. */
+function mentionsPath(command: string, path: string): boolean {
+  const clean = path.replace(/\/+$/, "");
+  if (!clean) return false;
+  return new RegExp(`${escapeRegExp(clean)}(?=[\\/\\s'"\`;&|)]|$)`).test(command);
+}
 
 /** `rm` di dalam workspace atau folder tugas itu wajar; di luar itu perlu persetujuan. */
 function removesOutsideWorkArea(command: string, ctx: PolicyContext): boolean {
@@ -206,6 +232,9 @@ export function classifyCommand(command: string, ctx: PolicyContext): PolicyDeci
 
   for (const rule of DENY) {
     if (rule.test.test(text)) return { decision: "deny", reason: rule.reason };
+  }
+  for (const path of ctx.protectedPaths ?? []) {
+    if (mentionsPath(text, path)) return { decision: "deny", reason: `menyentuh folder terlindung ${path}` };
   }
   const commitVerdict = checkCommit(command, ctx);
   if (commitVerdict) return commitVerdict;
