@@ -17,8 +17,12 @@ process.env.WORKSPACE_DIR = join(sandbox, "workspace");
 process.env.AGY_DIR = join(sandbox, "data-agy");
 process.env.STOP_GRACE_MS = "120";
 process.env.AGY_BACKGROUND_QUIET_MS = "60";
+// `agy` palsu yang tidak pernah dijalankan (launcher disuntik): cukup supaya akun Gemini terbaca "ada di mesin ini".
+process.env.AGY_BIN = join(sandbox, "bin", "agy");
 mkdirSync(process.env.WORKSPACE_DIR, { recursive: true });
 mkdirSync(process.env.AGY_DIR, { recursive: true });
+mkdirSync(join(sandbox, "bin"), { recursive: true });
+writeFileSync(process.env.AGY_BIN, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
 const { createTask, patchAssignment, getTask } = await import("../server/tasks.ts");
 const { Semaphore } = await import("../server/agent/semaphore.ts");
@@ -28,6 +32,7 @@ const { startHook, waitHook } = await import("../server/engines/antigravity/hook
 const { decideTool } = await import("../server/engines/antigravity/permissions.ts");
 const { CONFIG } = await import("../server/config.ts");
 import type { TurnOutcome } from "../server/agent/runner.ts";
+import type { ChatOptions } from "../server/engines/antigravity/chat.ts";
 import type { HookAnswer } from "../server/engines/antigravity/hooks.ts";
 import type { Launcher } from "../server/engines/antigravity/process.ts";
 import type { AutonomyMode, RoleId, StoredEvent } from "../server/types.ts";
@@ -562,6 +567,244 @@ const workspace = CONFIG.workspaceDir;
   const after = await startHook(token, { toolCall: { id: "x", name: "run_command", args: { CommandLine: "ls" } } }, 10);
   check("D17 token hook dicabut saat runner ditutup", after === undefined, after);
   h.unsubscribe();
+}
+
+// ---------- E. sesi ringan AgyChat (kurator, panel Tanya) ----------
+const { AgyChat } = await import("../server/engines/antigravity/chat.ts");
+const store = await import("../server/accounts/store.ts");
+
+function chatHarness(options: Partial<ChatOptions> = {}) {
+  const fake = fakeAgent();
+  const deltas: string[] = [];
+  const notices: string[] = [];
+  const chat = new AgyChat({
+    cwd: workspace,
+    additionalDirectories: [CONFIG.tasksDir],
+    areaDir: CONFIG.tasksDir,
+    systemPrompt: "PERSONA-UJI",
+    launch: fake.launcher,
+    accountEnv: async () => ({ ...process.env }),
+    onText: (text) => deltas.push(text),
+    onNotice: (text) => notices.push(text),
+    ...options,
+  });
+  const hook = (name: string) => fake.calls.hooks.filter((item) => item.name === name).at(-1)?.answer;
+  return { chat, calls: fake.calls, deltas, notices, hook };
+}
+
+{
+  const h = chatHarness();
+  const reply = await h.chat.prompt("halo");
+  const created = h.calls.news[0];
+  const append = String((created?._meta as { antigravity?: { systemPrompt?: { append?: string } } } | undefined)?.antigravity?.systemPrompt?.append ?? "");
+  check("E1 jawaban dan alasan berhenti", reply.text === "diterima:halo" && reply.stopReason === "end_turn", reply);
+  check("E2 teks mengalir lewat onText", h.deltas.join("") === "diterima:halo", h.deltas);
+  check("E3 persona + catatan mesin, tanpa server MCP", append.startsWith("PERSONA-UJI") && append.includes("Catatan mesin (Antigravity)") && created?.mcpServers.length === 0, created);
+  check("E4 tanpa model/effort: config sesi tidak diubah", h.calls.configs.length === 0 && reply.model === "gemini-3.8-flash", h.calls.configs);
+
+  await h.chat.prompt(`read:${join(workspace, "a.txt")}`);
+  check("E5 read_file di workspace boleh", h.hook("read_file")?.decision === "allow", h.hook("read_file"));
+  await h.chat.prompt(`write:${join(workspace, "a.txt")}`);
+  check("E6 write_file ditolak", h.hook("write_file")?.decision === "deny" && /Hanya baca/.test(h.hook("write_file")?.reason ?? ""), h.hook("write_file"));
+  await h.chat.prompt("shell:ls -la");
+  check("E7 perintah baca boleh, request_permission disetujui", h.hook("run_command")?.decision === "allow" && h.calls.permissions.at(-1)?.outcome !== undefined && (h.calls.permissions.at(-1)?.outcome as { optionId?: string }).optionId === "allow");
+  await h.chat.prompt("shell:rm -rf build");
+  check("E8 perintah yang mengubah ditolak", h.hook("run_command")?.decision === "deny", h.hook("run_command"));
+
+  const notes = join(CONFIG.tasksDir, "T-999", "notes.md");
+  mkdirSync(join(CONFIG.tasksDir, "T-999"), { recursive: true });
+  writeFileSync(notes, "rahasia owner");
+  await h.chat.prompt(`read:${notes}`);
+  check("E9 notes.md owner ditolak", h.hook("read_file")?.decision === "deny", h.hook("read_file"));
+  await h.chat.prompt(`read:${join(CONFIG.accountsDir, "claude", ".credentials.json")}`);
+  check("E10 data akun ditolak", h.hook("read_file")?.decision === "deny", h.hook("read_file"));
+
+  await h.chat.prompt("tool:mcp_curator_register_get");
+  check("E11 MCP yang tidak dipasang ditolak", h.hook("mcp_curator_register_get")?.decision === "deny", h.hook("mcp_curator_register_get"));
+  await h.chat.prompt("tool:mcp_team_findings_list");
+  check("E12 tool team tidak ada di sesi ringan", h.hook("mcp_team_findings_list")?.decision === "deny");
+  await h.chat.prompt("ask");
+  check("E13 ask_question ditolak (tidak ada owner yang menjawab)", h.hook("ask_question")?.decision === "deny", h.hook("ask_question"));
+  await h.chat.prompt("tool:search_web");
+  check("E14 web ditolak", h.hook("search_web")?.decision === "deny");
+  check("E15 percakapan berlanjut di satu sesi", h.calls.news.length === 1 && h.calls.prompts.length === 11, { news: h.calls.news.length, prompts: h.calls.prompts.length });
+
+  await h.chat.setModel("claude-sonnet-4-6");
+  await h.chat.setModel(undefined);
+  const models = h.calls.configs.filter((item) => item.configId === "model").map((item) => item.value);
+  check("E16 ganti model lalu kembali ke bawaan sesi", models.join(",") === "claude-sonnet-4-6,gemini-3.8-flash" && h.chat.model === "gemini-3.8-flash", models);
+
+  const abort = new AbortController();
+  const slow = h.chat.prompt("slow:5000", abort.signal);
+  await until(() => h.calls.prompts.at(-1) === "slow:5000");
+  abort.abort(new Error("batas waktu uji"));
+  const failure = await slow.then(
+    () => undefined,
+    (error: Error) => error.message,
+  );
+  check("E17 abort → session/cancel, prompt ditolak dengan alasannya", failure === "batas waktu uji" && h.calls.cancels === 1, { failure, cancels: h.calls.cancels });
+
+  const token = (h.chat as unknown as { hook: { token: string } }).hook.token;
+  await h.chat.close();
+  const after = await startHook(token, { toolCall: { id: "x", name: "run_command", args: { CommandLine: "ls" } } }, 10);
+  check("E18 close mematikan proses dan mencabut token hook", h.calls.kills >= 1 && after === undefined && h.chat.ended, { kills: h.calls.kills, after });
+  const closed = await h.chat.prompt("lagi").then(
+    () => "jalan",
+    (error: Error) => error.message,
+  );
+  check("E19 sesi yang ditutup menolak pesan baru", /ditutup/.test(closed), closed);
+}
+{
+  const h = chatHarness({ model: "claude-sonnet-4-6", effort: "low", mcp: { curator: () => { throw new Error("tidak dipanggil di uji"); } } });
+  await h.chat.prompt("tool:mcp_curator_register_get");
+  const created = h.calls.news[0];
+  const curatorServer = created?.mcpServers.find((server) => server.name === "curator") as { url?: string; headers?: Array<{ value: string }> } | undefined;
+  check("E20 server MCP sesi lewat HTTP dengan token", /\/api\/internal\/mcp\/curator$/.test(curatorServer?.url ?? "") && /^Bearer [0-9a-f]{64}$/.test(curatorServer?.headers?.[0]?.value ?? ""), curatorServer);
+  check("E21 tool MCP yang dipasang boleh", h.hook("mcp_curator_register_get")?.decision === "allow", h.hook("mcp_curator_register_get"));
+  check(
+    "E22 model dan thinking level dipasang",
+    h.calls.configs.some((item) => item.configId === "model" && item.value === "claude-sonnet-4-6") &&
+      h.calls.configs.some((item) => item.configId === "thought_level" && item.value === "low"),
+    h.calls.configs,
+  );
+  await h.chat.close();
+}
+{
+  // agy menolak login: akun Gemini app ditandai perlu login ulang.
+  store.saveAccount("gemini", { addedAt: new Date().toISOString(), status: "ok" });
+  const rejecting: Launcher = (options) => {
+    const real = fakeAgent().launcher(options);
+    return { ...real, stderrTail: () => "Error: you must sign in again" };
+  };
+  const failing = new AgyChat({
+    cwd: workspace,
+    areaDir: CONFIG.tasksDir,
+    systemPrompt: "x",
+    launch: (options) => {
+      const proc = rejecting(options);
+      void proc.kill();
+      return proc;
+    },
+    accountEnv: async () => ({}),
+  });
+  const error = await failing.prompt("halo").then(
+    () => undefined,
+    (cause: Error) => cause.message,
+  );
+  check("E23 sesi gagal dimulai → galat jelas", /Antigravity gagal memulai sesi/.test(error ?? ""), error);
+  check("E24 galat login menandai akun Gemini kedaluwarsa", store.getAccount("gemini")?.status === "expired", store.getAccount("gemini"));
+  await failing.close();
+  store.removeAccount("gemini");
+}
+
+// ---------- F. kurator & panel Tanya mengikuti akun ----------
+const accounts = await import("../server/accounts/index.ts");
+const { updateSettings } = await import("../server/settings.ts");
+const { Curator, curatorEngine } = await import("../server/agent/curator.ts");
+const { ASK_NEEDS_ACCOUNT, AskHub, askDefaults, askOptions, resolveAskChoice } = await import("../server/agent/ask.ts");
+const { effortFor } = await import("../server/settings.ts");
+const { THOUGHT_LEVEL } = await import("../server/engines/antigravity/config-options.ts");
+const { createProject, workspaceForProject } = await import("../server/projects.ts");
+const { readCuration, readLog } = await import("../server/findings.ts");
+const { updateTask } = await import("../server/tasks.ts");
+const ok = () => ({ addedAt: new Date().toISOString(), status: "ok" as const });
+// Keyring pribadi butuh dbus-daemon & gnome-keyring-daemon di mesin ini; tanpa itu Gemini memang tidak bisa dipakai.
+const keyringReady = accounts.accountView("gemini").state !== "unavailable";
+{
+  type Chosen = { ok: boolean; engine?: string; model?: string; status?: number; error?: string };
+  const choose = (input: { engine?: unknown; model?: unknown }): Chosen => {
+    const result = resolveAskChoice(input);
+    return result.ok ? { ok: true, ...result.choice } : { ok: false, status: result.status, error: result.error };
+  };
+  check("F1 tanpa akun: kurator tidak punya mesin", curatorEngine() === undefined);
+  check("F2 tanpa akun: Tanya tidak punya mesin (409)", askDefaults().engine === undefined && choose({}).status === 409 && choose({}).error === ASK_NEEDS_ACCOUNT, choose({}));
+  store.saveAccount("claude", ok());
+  check("F3 akun Claude: kurator di Claude", curatorEngine() === "claude");
+  check("F4 Tanya bawaan: Claude dengan MODEL_ASK", askDefaults().preferred === "claude" && askDefaults().models.claude === CONFIG.models.ask, askDefaults());
+  check("F4b MODEL_ASK kosong jatuh ke model bot QA", process.env.MODEL_ASK ? true : CONFIG.models.ask === CONFIG.models.qa, CONFIG.models);
+  check("F4c pilihan kosong → mesin + model bawaan Tanya", JSON.stringify(choose({})) === JSON.stringify({ ok: true, engine: "claude", model: CONFIG.models.ask }), choose({}));
+  check("F4d mesin tanpa akun ditolak (409)", choose({ engine: "antigravity" }).status === 409, choose({ engine: "antigravity" }));
+  check("F4e mesin tak dikenal ditolak (400)", choose({ engine: "gpt" }).status === 400, choose({ engine: "gpt" }));
+  check("F4f id model tidak sah ditolak (400)", choose({ model: "rm -rf /" }).status === 400, choose({ model: "rm -rf /" }));
+  store.patchAccount("claude", { models: [{ id: "claude-sonnet-5-5", name: "Sonnet 5.5" }, { id: "claude-opus-5", name: "Opus 5" }] });
+  check("F4g model dari daftar akun dipakai", choose({ engine: "claude", model: "claude-opus-5" }).model === "claude-opus-5", choose({ engine: "claude", model: "claude-opus-5" }));
+  check("F4h model di luar daftar akun ditolak (400)", choose({ model: "claude-haiku-9" }).status === 400 && /tidak ada di akun Claude/.test(String(choose({ model: "claude-haiku-9" }).error)), choose({ model: "claude-haiku-9" }));
+  updateSettings({ claudeModels: { ask: "claude-opus-5" } });
+  check("F4i model Tanya di Pengaturan jadi bawaan", choose({}).model === "claude-opus-5" && askDefaults().models.claude === "claude-opus-5", choose({}));
+  updateSettings({ claudeModels: { ask: null } });
+  mkdirSync(join(sandbox, "ws-tanya"), { recursive: true });
+  const askProject = createProject({ name: "Uji Tanya", workspaceDir: join(sandbox, "ws-tanya") });
+  const askTask = createTask({ title: "Tanya Claude", description: "uji opsi", role: "qa", projectId: askProject.id });
+  updateTask(askTask.id, { status: "needs_review" });
+  check("F4j sesi Tanya Claude memakai penalaran Tanya", askOptions(askTask.id, "claude-opus-5", []).effort === effortFor("ask"), askOptions(askTask.id, "claude-opus-5", []).effort);
+  {
+    const opts = askOptions(askTask.id, "claude-opus-5", []);
+    const deny = (opts.settings as { permissions?: { deny?: string[] } } | undefined)?.permissions?.deny ?? [];
+    check(
+      "F4k Tanya: tool Artifact ditolak dan disembunyikan",
+      ["Artifact", "ArtifactComments", "ArtifactData"].every((tool) => opts.disallowedTools?.includes(tool) && deny.includes(tool)),
+      { disallowed: opts.disallowedTools, deny },
+    );
+  }
+  store.patchAccount("claude", { models: [] });
+  updateSettings({ curatorEngine: "antigravity", askEngine: "antigravity" });
+  check("F5 kurator dipasang ke Gemini tanpa akun Gemini → tetap Claude", curatorEngine() === "claude");
+  check("F5b Tanya dipasang ke Gemini tanpa akun Gemini → Claude", askDefaults().preferred === "antigravity" && askDefaults().engine === "claude" && choose({}).engine === "claude", askDefaults());
+  if (keyringReady) {
+    store.saveAccount("gemini", ok());
+    check("F6 kurator dipasang ke Gemini dan akunnya ada → Gemini", curatorEngine() === "antigravity");
+    check("F7 Tanya dipasang ke Gemini → Gemini, model bawaan agy", JSON.stringify(choose({})) === JSON.stringify({ ok: true, engine: "antigravity" }), choose({}));
+    updateSettings({ geminiModels: { qa: "gemini-3.8-flash", engineer: "claude-sonnet-4-6", curator: "claude-sonnet-4-6", ask: "gemini-3.8-flash" } });
+    check("F8 model Gemini Tanya dari Pengaturan; Claude tetap bisa dipilih", choose({}).model === "gemini-3.8-flash" && choose({ engine: "claude" }).engine === "claude", [choose({}), choose({ engine: "claude" })]);
+    store.patchAccount("claude", { status: "expired" });
+    updateSettings({ askEngine: "claude" });
+    check("F9 Claude kedaluwarsa: Tanya pindah ke Gemini, Claude ditolak", askDefaults().engine === "antigravity" && choose({ engine: "claude" }).status === 409, [askDefaults(), choose({ engine: "claude" })]);
+    store.saveAccount("claude", ok());
+  } else {
+    console.log("     (F6–F9 dilewati: dbus-daemon/gnome-keyring-daemon tidak ada di mesin ini)");
+  }
+}
+if (keyringReady) {
+  // Kurator di Gemini: satu putaran lewat agy palsu.
+  const fake = fakeAgent();
+  const curatorUnderTest = new Curator({ launch: fake.launcher, accountEnv: async () => ({ ...process.env }) });
+  const project = createProject({ name: "Uji kurator Gemini", workspaceDir: join(sandbox, "ws-kurator") });
+  mkdirSync(join(sandbox, "ws-kurator"), { recursive: true });
+  await curatorUnderTest.run(project.id, true);
+  const created = fake.calls.news[0];
+  const append = String((created?._meta as { antigravity?: { systemPrompt?: { append?: string } } } | undefined)?.antigravity?.systemPrompt?.append ?? "");
+  check("F10 kurator Gemini: sesi di workspace project", created?.cwd === workspaceForProject(project.id), created?.cwd);
+  check("F11 kurator Gemini: server MCP curator dipasang", created?.mcpServers.some((server) => server.name === "curator") === true, created?.mcpServers);
+  check("F12 kurator Gemini: persona kurator + catatan mesin", append.includes("mcp__curator__") && append.includes("mcp_<server>_<tool>"));
+  check("F13 kurator Gemini: model Gemini kurator dari Pengaturan dipasang", fake.calls.configs.some((item) => item.configId === "model" && item.value === "claude-sonnet-4-6"), fake.calls.configs);
+  check("F14 kurator Gemini: putaran tercatat tanpa biaya", readCuration(project.id).runs === 1 && readCuration(project.id).costUsd === 0 && !readCuration(project.id).lastError, readCuration(project.id));
+  check("F15 kurator Gemini: log menyebut mesinnya", readLog(project.id).some((entry) => entry.action === "run" && /Gemini · biaya tidak dilaporkan/.test(entry.detail ?? "")), readLog(project.id));
+  check("F16 kurator Gemini: proses ditutup setelah putaran", fake.calls.kills >= 1);
+  check("F17 status kurator menyebut mesin", curatorUnderTest.status(project.id).engine === "antigravity");
+
+  // Panel Tanya di Gemini.
+  const fakeAsk = fakeAgent();
+  const hub = new AskHub({ launch: fakeAsk.launcher, accountEnv: async () => ({ ...process.env }) });
+  const task = createTask({ title: "Tanya Gemini", description: "uji tanya", role: "qa", projectId: project.id });
+  updateTask(task.id, { status: "needs_review" });
+  const events: Array<{ type: string; text?: string }> = [];
+  const off = hub.subscribe(task.id, (event) => events.push(event as { type: string; text?: string }));
+  const first = await hub.ask(task.id, "apa temuannya?", { engine: "antigravity", model: "gemini-3.8-flash" });
+  const askAppend = String((fakeAsk.calls.news[0]?._meta as { antigravity?: { systemPrompt?: { append?: string } } } | undefined)?.antigravity?.systemPrompt?.append ?? "");
+  check("F18 Tanya Gemini menjawab", first.text === "diterima:apa temuannya?" && first.costUsd === undefined, first);
+  check("F18b jawaban membawa mesin + model", first.engine === "antigravity" && first.model === "gemini-3.8-flash", first);
+  check("F18c sesi Tanya Gemini memakai penalaran Tanya", fakeAsk.calls.configs.some((item) => item.configId === "thought_level" && item.value === THOUGHT_LEVEL[effortFor("ask")]), fakeAsk.calls.configs);
+  check("F19 Tanya Gemini: delta dikirim ke panel", events.some((event) => event.type === "delta"), events);
+  check("F20 Tanya Gemini: konteks tugas di system prompt", askAppend.includes("Tanya Gemini"), askAppend.slice(0, 200));
+  await hub.ask(task.id, "lanjut", { engine: "antigravity", model: "claude-sonnet-4-6" });
+  check("F21 Tanya Gemini: pertanyaan kedua di sesi yang sama, model diganti", fakeAsk.calls.news.length === 1 && fakeAsk.calls.configs.some((item) => item.configId === "model" && item.value === "claude-sonnet-4-6"), fakeAsk.calls.configs);
+  check("F22 Tanya: riwayat panel tersimpan", hub.state(task.id).messages.length === 4);
+  hub.clear(task.id);
+  check("F23 Hapus percakapan menutup proses agy", await until(() => fakeAsk.calls.kills >= 1));
+  off();
+  await hub.closeAll();
+} else {
+  console.log("     (F10–F23 dilewati: dbus-daemon/gnome-keyring-daemon tidak ada di mesin ini)");
 }
 
 rmSync(sandbox, { recursive: true, force: true });

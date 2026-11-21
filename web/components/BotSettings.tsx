@@ -13,12 +13,11 @@ import {
 } from "../api.ts";
 import type { SettingsPatch } from "../../server/settings.ts";
 import { ENGINE_SHORT, GeminiRiskNote, modelName } from "./EnginePicker.tsx";
+import { Select } from "./Select.tsx";
 
 const MODES: AutonomyMode[] = ["auto", "ask", "readonly"];
 const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
 const ENGINE_IDS: EngineId[] = ["claude", "antigravity"];
-
-const SELECT = "w-full min-w-0 rounded-lg border border-line bg-page px-2 py-1 text-xs text-ink disabled:opacity-50";
 
 /** Satu sel tabel; di layar sempit labelnya tampil di atas isinya. */
 function Cell({ label, children }: { label: string; children: ReactNode }) {
@@ -50,24 +49,22 @@ function ModelSelect({
   const fallbackName = modelName(models, fallback);
   const selected = models.find((item) => item.id === value);
   return (
-    <select
+    <Select
       value={value ?? ""}
       disabled={disabled}
-      onChange={(event) => onChange(event.target.value || null)}
-      aria-label={`Model ${ENGINE_SHORT[engine]}`}
+      onChange={(next) => onChange(next || null)}
+      ariaLabel={`Model ${ENGINE_SHORT[engine]}`}
       title={selected ? `${selected.description ?? selected.name} — ${selected.id}` : fallback}
-      className={SELECT}
-    >
-      <option value="">
-        {engine === "claude" ? `Bawaan (.env: ${fallbackName ?? "—"})` : `Bawaan agy${fallbackName ? ` (${fallbackName})` : ""}`}
-      </option>
-      {models.map((item) => (
-        <option key={item.id} value={item.id} title={`${item.description ?? ""} ${item.id}`.trim()}>
-          {item.name}
-        </option>
-      ))}
-      {value && !selected && <option value={value}>{value} (tidak terdaftar di akun)</option>}
-    </select>
+      className="w-full"
+      options={[
+        {
+          value: "",
+          label: engine === "claude" ? `Bawaan (.env: ${fallbackName ?? "—"})` : `Bawaan agy${fallbackName ? ` (${fallbackName})` : ""}`,
+        },
+        ...models.map((item) => ({ value: item.id, label: item.name, description: item.description })),
+        ...(value && !selected ? [{ value, label: `${value} (tidak terdaftar di akun)` }] : []),
+      ]}
+    />
   );
 }
 
@@ -83,26 +80,138 @@ function EffortSelect({
   onChange: (effort: Effort | null) => void;
 }) {
   return (
-    <select
+    <Select
       value={value ?? ""}
       disabled={disabled}
-      onChange={(event) => onChange((event.target.value || null) as Effort | null)}
-      aria-label="Tingkat penalaran"
-      className={SELECT}
-    >
-      <option value="">Bawaan ({EFFORT_LABEL[fallback]})</option>
-      {EFFORTS.map((effort) => (
-        <option key={effort} value={effort}>
-          {EFFORT_LABEL[effort]}
-        </option>
-      ))}
-    </select>
+      onChange={(next) => onChange((next || null) as Effort | null)}
+      ariaLabel="Tingkat penalaran"
+      className="w-full"
+      options={[
+        { value: "", label: `Bawaan (${EFFORT_LABEL[fallback]})` },
+        ...EFFORTS.map((effort) => ({ value: effort, label: EFFORT_LABEL[effort] })),
+      ]}
+    />
+  );
+}
+
+/** Pilihan mesin satu baris; dengan satu mesin siap cukup ditampilkan namanya. */
+function EngineChoice({
+  label,
+  engine,
+  engines,
+  disabled,
+  onPick,
+}: {
+  label: string;
+  engine: EngineId;
+  engines?: EngineInfo[];
+  disabled?: boolean;
+  onPick: (engine: EngineId) => void;
+}) {
+  const info = (id: EngineId) => engines?.find((item) => item.id === id);
+  const ready = ENGINE_IDS.filter((id) => info(id)?.available);
+  const blocked = engines && !info(engine)?.available;
+  if (ready.length <= 1 && !blocked) return <span className="text-xs text-muted">{ENGINE_SHORT[engine]}</span>;
+  return (
+    <div className="flex gap-1" role="radiogroup" aria-label={`Mesin ${label}`}>
+      {ENGINE_IDS.map((id) => {
+        const available = info(id)?.available ?? false;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="radio"
+            aria-checked={engine === id}
+            disabled={disabled || (!available && engine !== id)}
+            title={available ? undefined : info(id)?.reason}
+            onClick={() => onPick(id)}
+            className={`rounded-lg border px-2 py-0.5 text-[11px] disabled:opacity-40 ${
+              engine === id ? "border-accent bg-accent-soft text-accent-ink" : "border-line text-muted hover:border-line-strong"
+            }`}
+          >
+            {ENGINE_SHORT[id]}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
 /**
- * Pengaturan → Bot: mesin, model, tingkat penalaran, dan mode bawaan tiap bot, plus model kurator.
- * Berlaku untuk tugas dan operan baru; tugas yang sudah jalan memakai pilihannya sendiri.
+ * Baris pembantu tanpa mode (kurator memori, panel Tanya): mesin, model, penalaran. Kalau akun mesin
+ * pilihannya belum siap, pembantu ini memakai mesin lain yang siap — dan baris ini menyebutnya.
+ */
+function HelperRow({
+  label,
+  blurb,
+  modelKey,
+  engine,
+  settings,
+  engines,
+  saving,
+  save,
+  onPickEngine,
+}: {
+  label: string;
+  blurb: string;
+  modelKey: "curator" | "ask";
+  engine: EngineId;
+  settings: SettingsView;
+  engines?: EngineInfo[];
+  saving: boolean;
+  save: (patch: SettingsPatch) => void;
+  onPickEngine: (engine: EngineId) => void;
+}) {
+  const engineInfo = engines?.find((item) => item.id === engine);
+  const blocked = engines && !engineInfo?.available;
+  const fallback = blocked ? engines?.find((item) => item.available) : undefined;
+  return (
+    <div className="grid grid-cols-2 gap-3 border-t border-line px-3 py-2.5 md:grid-cols-[10rem_8.5rem_minmax(0,1fr)_10rem_9rem] md:items-center">
+      <div className="col-span-2 min-w-0 md:col-span-1">
+        <span className="block text-sm text-ink">{label}</span>
+        {blocked ? (
+          <span className="block text-[11px] text-tag-yellow-ink" title={engineInfo?.reason}>
+            {fallback
+              ? `Akun ${ENGINE_SHORT[engine]} belum siap — sementara memakai ${ENGINE_SHORT[fallback.id]}`
+              : `Akun ${ENGINE_SHORT[engine]} belum siap`}
+          </span>
+        ) : (
+          <span className="block text-[11px] text-faint">{blurb}</span>
+        )}
+      </div>
+      <Cell label="Mesin">
+        <EngineChoice label={label} engine={engine} engines={engines} disabled={saving} onPick={onPickEngine} />
+      </Cell>
+      <Cell label="Model">
+        <ModelSelect
+          engine={engine}
+          info={engineInfo}
+          value={engine === "claude" ? settings.claudeModels[modelKey] : settings.geminiModels[modelKey]}
+          fallback={engine === "claude" ? settings.defaults.claudeModels[modelKey] : engineInfo?.defaultModel}
+          disabled={saving}
+          onChange={(model) => save(modelPatch(engine, modelKey, model))}
+        />
+      </Cell>
+      <Cell label="Penalaran">
+        <EffortSelect
+          value={settings.efforts[modelKey]}
+          fallback={settings.defaults.efforts[modelKey]}
+          disabled={saving}
+          onChange={(effort) => save({ efforts: { [modelKey]: effort } })}
+        />
+      </Cell>
+      <span className="hidden text-xs text-faint md:block">—</span>
+    </div>
+  );
+}
+
+function modelPatch(engine: EngineId, key: ModelKey, model: string | null): SettingsPatch {
+  return engine === "claude" ? { claudeModels: { [key]: model } } : { geminiModels: { [key]: model } };
+}
+
+/**
+ * Pengaturan → Bot: mesin, model, tingkat penalaran, dan mode bawaan tiap bot, plus kurator memori dan
+ * panel Tanya. Berlaku untuk tugas dan operan baru; tugas yang sudah jalan memakai pilihannya sendiri.
  */
 export function BotSettings({
   roles,
@@ -118,11 +227,10 @@ export function BotSettings({
   save: (patch: SettingsPatch) => void;
 }) {
   const info = (engine: EngineId) => engines?.find((item) => item.id === engine);
-  const ready = ENGINE_IDS.filter((engine) => info(engine)?.available);
-  const claude = info("claude");
-  const usesGemini = roles.some((role) => settings.engines[role.id] === "antigravity");
-  const modelPatch = (engine: EngineId, key: ModelKey, model: string | null): SettingsPatch =>
-    engine === "claude" ? { claudeModels: { [key]: model } } : { geminiModels: { [key]: model } };
+  const usesGemini =
+    roles.some((role) => settings.engines[role.id] === "antigravity") ||
+    settings.curatorEngine === "antigravity" ||
+    settings.askEngine === "antigravity";
 
   return (
     <section>
@@ -160,31 +268,13 @@ export function BotSettings({
                 )}
               </div>
               <Cell label="Mesin">
-                {ready.length <= 1 && !blocked ? (
-                  <span className="text-xs text-muted">{ENGINE_SHORT[engine]}</span>
-                ) : (
-                  <div className="flex gap-1" role="radiogroup" aria-label={`Mesin ${role.title}`}>
-                    {ENGINE_IDS.map((id) => {
-                      const available = info(id)?.available ?? false;
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          role="radio"
-                          aria-checked={engine === id}
-                          disabled={saving || (!available && engine !== id)}
-                          title={available ? undefined : info(id)?.reason}
-                          onClick={() => save({ engines: { ...settings.engines, [role.id]: id } })}
-                          className={`rounded-lg border px-2 py-0.5 text-[11px] disabled:opacity-40 ${
-                            engine === id ? "border-accent bg-accent-soft text-accent-ink" : "border-line text-muted hover:border-line-strong"
-                          }`}
-                        >
-                          {ENGINE_SHORT[id]}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                <EngineChoice
+                  label={role.title}
+                  engine={engine}
+                  engines={engines}
+                  disabled={saving}
+                  onPick={(id) => save({ engines: { ...settings.engines, [role.id]: id } })}
+                />
               </Cell>
               <Cell label="Model">
                 <ModelSelect
@@ -205,56 +295,45 @@ export function BotSettings({
                 />
               </Cell>
               <Cell label="Mode">
-                <select
+                <Select
                   value={settings.modes[role.id]}
                   disabled={saving}
-                  onChange={(event) => save({ modes: { ...settings.modes, [role.id]: event.target.value as AutonomyMode } })}
-                  aria-label={`Mode ${role.title}`}
+                  onChange={(next) => save({ modes: { ...settings.modes, [role.id]: next as AutonomyMode } })}
+                  ariaLabel={`Mode ${role.title}`}
                   title={MODE_NOTE[settings.modes[role.id]]}
-                  className={SELECT}
-                >
-                  {MODES.map((mode) => (
-                    <option key={mode} value={mode} title={MODE_NOTE[mode]}>
-                      {MODE_LABEL[mode]}
-                    </option>
-                  ))}
-                </select>
+                  className="w-full"
+                  options={MODES.map((mode) => ({ value: mode, label: MODE_LABEL[mode], description: MODE_NOTE[mode] }))}
+                />
               </Cell>
             </div>
           );
         })}
-        <div className="grid grid-cols-2 gap-3 border-t border-line px-3 py-2.5 md:grid-cols-[10rem_8.5rem_minmax(0,1fr)_10rem_9rem] md:items-center">
-          <div className="col-span-2 min-w-0 md:col-span-1">
-            <span className="block text-sm text-ink">Kurator memori</span>
-            <span className="block text-[11px] text-faint">Merangkum temuan ke register project</span>
-          </div>
-          <Cell label="Mesin">
-            <span className="text-xs text-muted">Claude</span>
-          </Cell>
-          <Cell label="Model">
-            <ModelSelect
-              engine="claude"
-              info={claude}
-              value={settings.claudeModels.curator}
-              fallback={settings.defaults.claudeModels.curator}
-              disabled={saving}
-              onChange={(model) => save({ claudeModels: { curator: model } })}
-            />
-          </Cell>
-          <Cell label="Penalaran">
-            <EffortSelect
-              value={settings.efforts.curator}
-              fallback={settings.defaults.efforts.curator}
-              disabled={saving}
-              onChange={(effort) => save({ efforts: { curator: effort } })}
-            />
-          </Cell>
-          <span className="hidden text-xs text-faint md:block">—</span>
-        </div>
+        <HelperRow
+          label="Kurator memori"
+          blurb="Merangkum temuan ke register project"
+          modelKey="curator"
+          engine={settings.curatorEngine}
+          settings={settings}
+          engines={engines}
+          saving={saving}
+          save={save}
+          onPickEngine={(id) => save({ curatorEngine: id })}
+        />
+        <HelperRow
+          label="Panel Tanya"
+          blurb="Bawaan saat panel dibuka; bisa diganti per pertanyaan"
+          modelKey="ask"
+          engine={settings.askEngine}
+          settings={settings}
+          engines={engines}
+          saving={saving}
+          save={save}
+          onPickEngine={(id) => save({ askEngine: id })}
+        />
       </div>
 
       <p className="mt-2 text-xs text-faint">
-        Panel Tanya memakai model Claude bot QA (cepat) dan Engineer (analisis berat). Di mode{" "}
+        Panel Tanya hanya membaca; mesin dan modelnya bisa diganti di panel untuk tiap pertanyaan. Di mode{" "}
         <strong className="text-muted">Auto</strong>, empat kategori ini tetap memunculkan kartu persetujuan: service &amp;
         container, data &amp; database, kredensial/firewall/akses, hapus berkas &amp; paket. Perintah katastrofik tetap ditolak
         tanpa bisa disetujui.

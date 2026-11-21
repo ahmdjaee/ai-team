@@ -15,7 +15,7 @@ import type {
 import type { ModelDefaults, ModelKey, Settings, SettingsPatch } from "../server/settings.ts";
 import type { Assignment, Review, Task, TaskStatus, TaskSummary } from "../server/tasks.ts";
 import type { Project } from "../server/projects.ts";
-import type { AskMessage } from "../server/agent/ask.ts";
+import type { AskDefaults, AskMessage } from "../server/agent/ask.ts";
 import type { DeletedRef } from "../server/deleted-tasks.ts";
 import type {
   DeletedRecapEntry,
@@ -28,7 +28,7 @@ import type {
   RecapVerdict,
 } from "../server/recap.ts";
 
-export type { AskMessage, Assignment, AttentionEvent, AutonomyMode, ContextUsage, EngineId, Project, RoleId, Review, Settings, StoredEvent, Task, TaskStatus, TaskSummary, UiEvent, WorkerStatus };
+export type { AskDefaults, AskMessage, Assignment, AttentionEvent, AutonomyMode, ContextUsage, EngineId, Project, RoleId, Review, Settings, StoredEvent, Task, TaskStatus, TaskSummary, UiEvent, WorkerStatus };
 
 export type { AccountView, Effort, ModelDefaults, ModelKey, ModelOption, ProviderId };
 
@@ -226,10 +226,10 @@ export const api = {
   taskDoc: (id: string, path: string) => request<DocContent>(docUrl(id, path)),
   taskNotes: (id: string) => request<{ text: string }>(`/api/tasks/${id}/notes`),
   askHistory: (id: string) =>
-    request<{ messages: AskMessage[]; busy: boolean; costUsd: number; models: { id: string; label: string }[] }>(
+    request<{ messages: AskMessage[]; busy: boolean; costUsd: number; defaults: AskDefaults }>(
       `/api/tasks/${id}/ask`,
     ),
-  ask: (id: string, body: { text: string; model?: string }) =>
+  ask: (id: string, body: { text: string; engine?: EngineId; model?: string }) =>
     request<{ message: AskMessage }>(`/api/tasks/${id}/ask`, { method: "POST", body: JSON.stringify(body) }),
   clearAsk: (id: string) => request<{ ok: true }>(`/api/tasks/${id}/ask`, { method: "DELETE" }),
   saveTaskNotes: (id: string, text: string) =>

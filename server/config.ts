@@ -42,6 +42,8 @@ export const CONFIG = {
     devops: str("MODEL_DEVOPS", "claude-opus-5"),
     uiux: str("MODEL_UIUX", "claude-opus-5-5"),
     curator: str("MODEL_CURATOR", "claude-sonnet-5-5"),
+    /** Panel Tanya; bawaannya model bot QA. */
+    ask: str("MODEL_ASK", str("MODEL_QA", "claude-sonnet-5-5")),
   },
   effort: {
     qa: effort("EFFORT_QA", "high"),
@@ -49,6 +51,7 @@ export const CONFIG = {
     devops: effort("EFFORT_DEVOPS", "medium"),
     uiux: effort("EFFORT_UIUX", "high"),
     curator: effort("EFFORT_CURATOR", "medium"),
+    ask: effort("EFFORT_ASK", "medium"),
   },
   /** Kurator register temuan: jalan otomatis setelah tugas selesai. CURATOR=0 mematikannya (Sync manual tetap bisa). */
   curatorAuto: str("CURATOR", "1") !== "0",

@@ -15,6 +15,7 @@ import { bus } from "../../agent/bus.ts";
 import { commandVerdict } from "../../agent/guard.ts";
 import type { AgentRunner } from "../../agent/runner-api.ts";
 import type { ApprovalDecision, RunnerHooks } from "../../agent/runner.ts";
+import { applySessionConfig } from "./config-options.ts";
 import { AcpEventMapper } from "./events.ts";
 import { HOOK_PATH, registerHookHandler, type HookAnswer, type HookPayload } from "./hooks.ts";
 import { isAgyAuthError } from "./availability.ts";
@@ -23,9 +24,6 @@ import { spawnAgy, type AgyProcess, type Launcher } from "./process.ts";
 import { toAskQuestions, uiTool } from "./tools.ts";
 
 const MODE_LABEL: Record<AutonomyMode, string> = { auto: "Auto", ask: "Minta approval", readonly: "Hanya baca" };
-
-/** Effort role (Claude) → `thought_level` agy. */
-const THOUGHT_LEVEL: Record<string, string> = { low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" };
 
 /**
  * Catatan untuk persona yang ditulis dengan nama tool Claude Code. Persona tidak disalin per mesin:
@@ -55,18 +53,6 @@ type Turn = {
 };
 
 type LiveProcess = AgyProcess & { mcp: McpEndpoint };
-
-type ConfigSelect = { id: string; category?: string; currentValue?: unknown; options?: unknown[] };
-
-function configValues(option: ConfigSelect): string[] {
-  const values: string[] = [];
-  for (const item of option.options ?? []) {
-    const record = item as Record<string, unknown>;
-    if (typeof record.value === "string") values.push(record.value);
-    if (Array.isArray(record.options)) values.push(...configValues({ id: "", options: record.options }));
-  }
-  return values;
-}
 
 function describeRequest(event: UiEvent): string | undefined {
   if (event.type === "approval") {
@@ -479,34 +465,12 @@ export class AcpTaskRunner implements AgentRunner {
 
   /** Model dan thinking level per penugasan, dari `configOptions` sesi (bukan flag CLI). */
   private async applyConfig(proc: LiveProcess, raw: unknown): Promise<void> {
-    const options = (Array.isArray(raw) ? raw : []) as ConfigSelect[];
     const sessionId = this.sessionId as string;
-    const set = (configId: string, value: string) =>
-      proc.connection.agent.request(acp.methods.agent.session.setConfigOption, { sessionId, configId, value });
-
-    const model = options.find((option) => option.id === "model" || option.category === "model");
-    this.currentModel = typeof model?.currentValue === "string" ? model.currentValue : undefined;
-    if (model && this.model && this.model !== this.currentModel) {
-      if (configValues(model).includes(this.model)) {
-        await set(model.id, this.model).then(
-          () => {
-            this.currentModel = this.model;
-          },
-          (error: Error) => this.emit({ type: "notice", text: `Model ${this.model} tidak bisa dipasang: ${error.message}` }),
-        );
-      } else {
-        this.emit({
-          type: "notice",
-          text: `Model ${this.model} tidak tersedia di akun Antigravity ini — memakai ${this.currentModel ?? "model bawaan"}.`,
-        });
-      }
-    }
-
-    const thought = options.find((option) => option.id === "thought_level" || option.category === "thought_level");
-    const level = THOUGHT_LEVEL[effortFor(this.role)] ?? "high";
-    if (thought && thought.currentValue !== level && configValues(thought).includes(level)) {
-      await set(thought.id, level).catch(() => undefined);
-    }
+    const result = await applySessionConfig(raw, { model: this.model, effort: effortFor(this.role) }, (configId, value) =>
+      proc.connection.agent.request(acp.methods.agent.session.setConfigOption, { sessionId, configId, value }),
+    );
+    this.currentModel = result.model;
+    for (const text of result.notices) this.emit({ type: "notice", text });
   }
 
   private onProcessExit(proc: LiveProcess): void {

@@ -128,7 +128,8 @@ menunggu sampai Anda login lagi.
 - pesan dan review "perlu perbaikan" ke tugas di mesin itu juga ditolak;
 - tugas yang sedang berjalan saat server mati tidak dilanjutkan. Statusnya menjadi "perlu dibaca" dengan catatan, dan
   pesan berikutnya setelah akun siap melanjutkannya;
-- panel Tanya dan kurator memori butuh akun Claude;
+- panel Tanya hanya bisa memilih mesin yang akunnya siap, dan kurator memori pindah ke mesin lain yang siap. Tanpa akun
+  sama sekali, keduanya tidak berjalan dan alasannya tampil di panel/laporan project;
 - login yang ditolak saat tugas berjalan menandai akun "Perlu login ulang".
 
 **Pindah dari login laptop.** Setelah akun Claude pertama kali terhubung, transkrip sesi yang dirujuk tugas disalin
@@ -146,11 +147,15 @@ yang menyebut `CLAUDE_CONFIG_DIR` atau `.credentials.json`, yang menjalankan `cl
 
 ## Model & penalaran per bot
 
-**Pengaturan → Bot** memuat satu baris per bot plus kurator memori, dengan kolom Mesin, Model, Penalaran, dan Mode:
+**Pengaturan → Bot** memuat satu baris per bot plus kurator memori dan panel Tanya, dengan kolom Mesin, Model, Penalaran,
+dan Mode:
 
 - Daftar model diambil dari akunnya sendiri (Claude Code `supportedModels()`; untuk Gemini, daftar model `agy`).
 - Model atau penalaran yang dikosongkan memakai `.env` (`MODEL_*`, `EFFORT_*`).
 - Mesin tanpa akun siap tidak bisa dipilih. Kalau hanya satu akun yang ada, kolom Mesin cukup berupa teks.
+- Baris **Kurator memori** dan **Panel Tanya** juga punya kolom Mesin (bawaan Claude), tanpa Mode. Kalau akun mesin
+  pilihannya belum siap, keduanya sementara memakai mesin lain yang siap. Baris Panel Tanya hanya bawaan: di panel,
+  mesin dan model bisa diganti per pertanyaan.
 
 Pilihan ini berlaku untuk tugas dan operan baru. Form **+ Tugas** dan **Oper ke…** bisa menggantinya per penugasan, juga
 untuk Claude. Model dicatat di penugasan (`assignments[].model`), jadi mengubah Pengaturan tidak mengubah tugas yang
@@ -203,7 +208,7 @@ Satu tugas atau satu lampiran bisa di-bookmark. Alamat tugas yang sudah tidak ad
 
 Tombol **«** di sebelah judul — atau **Ctrl+B** (Cmd+B di Mac) dari mana saja — melipat sidebar jadi rel sempit; isi tugas memakai ruang yang kosong itu. Di rel masih tersedia **»** untuk membuka lagi, tombol **+** untuk tugas baru, dan pengganti tema. Pilihannya tersimpan di browser Anda, jadi bertahan setelah muat ulang.
 
-Di kaki sidebar ada daftar mini akun AI: ● siap, ○ belum ada atau perlu login ulang. Klik untuk membuka Pengaturan.
+Status akun AI ada di Pengaturan → Akun AI. Kalau belum ada akun yang siap sama sekali, sebuah banner muncul dengan tautan ke sana.
 
 ## Tema
 
@@ -270,16 +275,21 @@ Semua pembaruan live — thread, status, tab Live, laporan, rekap project, panel
 
 ## Tanya (chat incognito)
 
-Tombol **Tanya** di header tugas — atau **Ctrl+K** — membuka panel di sisi kanan: sesi Claude terpisah yang tahu seluk-beluk tugas itu dan bisa Anda tanyai tanpa mengotori percakapan utama.
+Tombol **Tanya** di header tugas — atau **Ctrl+K** — membuka panel di sisi kanan: sesi Claude atau Gemini terpisah yang tahu seluk-beluk tugas itu dan bisa Anda tanyai tanpa mengotori percakapan utama.
 
-Yang ia **tidak** lakukan: tidak menulis satu baris pun ke `thread.jsonl`, tidak dibaca bot yang mengerjakan tugas, tidak menyimpan sesi (`persistSession: false`), tidak pernah memunculkan kartu persetujuan, dan tidak bisa mengubah apa pun — hanya `Read`/`Grep`/`Glob`, tanpa Bash/Edit/Write, dengan `notes.md` dan kredensial tetap ditolak.
+Yang ia **tidak** lakukan: tidak menulis satu baris pun ke `thread.jsonl`, tidak dibaca bot yang mengerjakan tugas, tidak menyimpan sesi Claude (`persistSession: false`), tidak pernah memunculkan kartu persetujuan, dan tidak bisa mengubah apa pun, dengan `notes.md` dan kredensial tetap ditolak:
+
+- di Claude hanya `Read`/`Grep`/`Glob`, tanpa Bash/Edit/Write;
+- di Gemini hanya `read_file` dan perintah yang membaca (`ls`, `cat`, `grep`, `git log`, …), dinilai pagar yang sama dengan mode *Hanya baca*. Menulis, web, subagen, dan `ask_question` ditolak.
 
 Yang ia **lihat**: instruksi tugas, status, ringkasan serah terima, 40 kejadian terakhir percakapan, konteks & memori project, plus path transcript penuh/laporan/lampiran/workspace supaya bisa membuka sendiri kalau perlu.
 
 - Panel tetap terbuka saat Anda berpindah tab (Kerja → Laporan → Lampiran), ditutup dengan **Esc**, tombol **✕**, atau Ctrl+K lagi.
-- Pemilih model per pertanyaan: *Cepat & murah* (model Claude bot QA) atau *Analisis berat* (model Claude bot Engineer), mengikuti Pengaturan → Bot lalu `.env`. Butuh akun Claude.
+- Pemilih per pertanyaan di bawah kolom tanya: **Claude / Gemini**, lalu model apa pun dari daftar model akun itu. Mesin tanpa akun siap tidak bisa dipilih, dan daftarnya ikut berubah saat Anda login atau keluar.
+- Pilihan awalnya dari baris **Panel Tanya** di Pengaturan → Bot (bawaan Claude dengan `MODEL_ASK`, yang bawaannya sama dengan `MODEL_QA`; Gemini tanpa model terpilih memakai model bawaan akun agy). Opsi *Bawaan Tanya* mengikuti baris itu. Pilihan di panel diingat selama tab terbuka, juga saat pindah tugas.
+- Ganti model di mesin yang sama melanjutkan sesi yang sama; ganti mesin memulai sesi baru yang tetap membawa riwayat panel. Mesin dan model yang menjawab tertulis kecil di bawah tiap jawaban.
 - Percakapannya hidup **di memori server**: bertahan saat refresh halaman, hilang saat `systemctl --user restart ai-team` atau saat Anda menekan **Hapus percakapan**.
-- Biayanya dicatat terpisah (`askCostUsd` di `task.json`) dan tampil di kaki panel, jadi angka biaya di daftar tugas tetap berarti "biaya bot".
+- Biayanya dicatat terpisah (`askCostUsd` di `task.json`) dan tampil di kaki panel, jadi angka biaya di daftar tugas tetap berarti "biaya bot". Jawaban Gemini tidak membawa biaya, karena `agy` tidak melaporkannya.
 
 ## Catatan per tugas
 
@@ -357,8 +367,10 @@ Google yang Anda tambahkan di **Pengaturan → Akun AI**.
 - **+ Tugas** dan **Oper ke…:** mengikuti setelan bot yang dipilih, dan bisa diganti per penugasan. Jadi
   `QA (Gemini) → Engineer (Claude)` bisa terjadi dalam satu tugas; bot berikutnya menerima ringkasan serah terima yang sama.
 - Penugasan Gemini ditandai lencana **Gemini** di header tugas dan di daftar tugas.
-- Panel **Tanya** dan kurator memori tetap memakai Claude. Kalau hanya akun Gemini yang ada, keduanya tidak berjalan dan
-  alasannya tampil di panel/laporan project.
+- Panel **Tanya** bisa memakai Gemini kalau akun Gemini siap, dengan model apa pun dari akun itu. **Kurator memori** memakai mesin di Pengaturan →
+  Bot (bawaan Claude), atau Gemini kalau hanya akun itu yang ada. Keduanya berjalan sebagai sesi `agy` *Hanya baca*;
+  kurator menulis register lewat server MCP `curator` miliknya, dibuka lewat HTTP seperti tool `team`. Putaran kurator di
+  Gemini tercatat tanpa biaya.
 
 **Cara pagarnya bekerja**
 
@@ -396,8 +408,8 @@ Kalau server tidak bisa dihubungi, hook menolak.
 |---|---|
 | `WORKSPACE_DIR` | Folder kerja **bawaan** Engineer & DevOps, dipakai project yang tidak punya folder sendiri. |
 | `TARGET_URL` | URL target **bawaan**, dipakai project yang tidak punya URL sendiri. |
-| `MODEL_QA` / `MODEL_ENGINEER` / `MODEL_DEVOPS` / `MODEL_UIUX` / `MODEL_CURATOR` | Model Claude **bawaan** per bot dan kurator; Pengaturan → Bot menimpanya. |
-| `EFFORT_*` | Penalaran **bawaan**, `low` … `max`. Makin tinggi makin teliti, makin lambat, makin boros kuota. Pengaturan → Bot menimpanya. |
+| `MODEL_QA` / `MODEL_ENGINEER` / `MODEL_DEVOPS` / `MODEL_UIUX` / `MODEL_CURATOR` / `MODEL_ASK` | Model Claude **bawaan** per bot, kurator, dan panel Tanya (`MODEL_ASK` kosong = `MODEL_QA`); Pengaturan → Bot menimpanya. |
+| `EFFORT_*` | Penalaran **bawaan**, `low` … `max`, termasuk `EFFORT_CURATOR` dan `EFFORT_ASK` (keduanya `medium`). Makin tinggi makin teliti, makin lambat, makin boros kuota. Pengaturan → Bot menimpanya. |
 | `MAX_CONCURRENT_AGENTS` | Berapa tugas boleh jalan bersamaan (default 2). |
 | `IDLE_SHUTDOWN_MS` | Kapan subprocess tugas yang menganggur ditutup (default 10 menit). |
 | `STOP_GRACE_MS` | Batas tunggu turn yang dihentikan dengan Stop (default 20 detik); lewat dari itu proses agen (Claude atau `agy`) ditutup paksa (sesinya tetap bisa dilanjutkan). |
@@ -438,7 +450,8 @@ Hapus `data/` untuk mulai dari nol, termasuk login akun AI.
 - **Aplikasi ini menjalankan perintah sebagai user Anda.** Server hanya bind ke `127.0.0.1` dan tanpa autentikasi. Jangan diekspos ke jaringan.
 - **Kuota langganan dibagi** dengan Claude Code harian Anda kalau akun Claude yang Anda tambahkan sama. Satu tugas QA penuh ±$0,25–0,6; satu tugas Engineer dengan test ±$0,7–1,0 setara pemakaian. Biaya per tugas tampil di daftar.
 - **Satu workspace per project dipakai bersama** oleh tugas di project itu: tugas kode di project yang sama dijalankan bergantian (kunci per folder workspace), belum ada checkout terpisah per tugas.
-- `settingSources: ["project"]` berarti `CLAUDE.md` dan `.claude/` milik workspace ikut termuat; aturan `permissions.allow` milik repo itu ikut berlaku (deny milik aplikasi ini tetap menang).
+- `settingSources: ["project"]` berarti `CLAUDE.md` dan `.claude/` milik workspace ikut termuat; aturan `permissions.allow` milik repo itu ikut berlaku (deny milik aplikasi ini tetap menang). `~/.claude/CLAUDE.md` di laptop **tidak** ikut, karena app memakai folder akunnya sendiri.
+- **Tidak ada Artifact (halaman claude.ai).** Tool `Artifact`/`ArtifactComments`/`ArtifactData` dan konektor claude.ai (`mcp__claude_ai_*`, termasuk Claude Docs) selalu ditolak untuk bot, panel Tanya, dan kurator, di mode apa pun termasuk Auto. Tool Artifact juga tidak ditawarkan ke model sama sekali.
 - Belum ada: sandbox container, jadwal otomatis, dependensi antar tugas, beberapa bot paralel di dalam **satu** tugas, dan bot yang membuat tugas sendiri tanpa persetujuan.
 
 ## Halaman demo

@@ -327,40 +327,6 @@ export function App() {
             </div>
 
             <div className="space-y-1 px-4 py-3 text-[11px] text-faint">
-              {accounts && (
-                <button
-                  onClick={openSettings}
-                  title="Akun AI — buka Pengaturan"
-                  className="-mx-1 flex w-[calc(100%+0.5rem)] flex-wrap items-center gap-x-3 gap-y-0.5 rounded px-1 py-0.5 text-left hover:bg-hover"
-                >
-                  {accounts.map((account) => (
-                    <span key={account.provider} className="flex min-w-0 items-center gap-1">
-                      <span
-                        aria-hidden
-                        className={
-                          accountReady(account)
-                            ? "text-tag-green-ink"
-                            : account.state === "expired"
-                              ? "text-tag-yellow-ink"
-                              : "text-faint"
-                        }
-                      >
-                        {accountReady(account) ? "●" : "○"}
-                      </span>
-                      <span className="text-muted">{account.label}</span>
-                      <span className="truncate">
-                        {accountReady(account)
-                          ? (account.email ?? "terhubung")
-                          : account.state === "expired"
-                            ? "login ulang"
-                            : account.state === "unavailable"
-                              ? "belum tersedia"
-                              : "belum ada"}
-                      </span>
-                    </span>
-                  ))}
-                </button>
-              )}
               <p className="truncate" title={activeProject?.workspaceDir ?? workspaceDir}>
                 workspace: {activeProject?.workspaceDir ?? workspaceDir}
               </p>

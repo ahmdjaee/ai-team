@@ -8,6 +8,7 @@ import {
   type TaskListItem,
   type TaskStatus,
 } from "../api.ts";
+import { Select } from "./Select.tsx";
 
 function age(iso: string): string {
   const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
@@ -53,29 +54,29 @@ export const TaskList = memo(function TaskList({
   return (
     <div className="flex h-full flex-col">
       <div className="flex gap-2 border-b border-line px-3 py-2">
-        <select
+        <Select
           value={filterRole}
-          onChange={(e) => onFilterRole(e.target.value as RoleId | "")}
-          className="flex-1 rounded-lg border border-line bg-page px-2 py-1 text-xs text-ink"
-        >
-          <option value="">semua bot</option>
-          <option value="qa">QA</option>
-          <option value="engineer">Engineer</option>
-          <option value="devops">DevOps</option>
-          <option value="uiux">UI/UX</option>
-        </select>
-        <select
+          onChange={(value) => onFilterRole(value as RoleId | "")}
+          ariaLabel="Saring menurut bot"
+          className="flex-1"
+          options={[
+            { value: "", label: "semua bot" },
+            { value: "qa", label: "QA" },
+            { value: "engineer", label: "Engineer" },
+            { value: "devops", label: "DevOps" },
+            { value: "uiux", label: "UI/UX" },
+          ]}
+        />
+        <Select
           value={filterStatus}
-          onChange={(e) => onFilterStatus(e.target.value as TaskStatus | "")}
-          className="flex-1 rounded-lg border border-line bg-page px-2 py-1 text-xs text-ink"
-        >
-          <option value="">semua status</option>
-          {(Object.keys(STATUS_LABEL) as TaskStatus[]).map((status) => (
-            <option key={status} value={status}>
-              {STATUS_LABEL[status]}
-            </option>
-          ))}
-        </select>
+          onChange={(value) => onFilterStatus(value as TaskStatus | "")}
+          ariaLabel="Saring menurut status"
+          className="flex-1"
+          options={[
+            { value: "", label: "semua status" },
+            ...(Object.keys(STATUS_LABEL) as TaskStatus[]).map((status) => ({ value: status, label: STATUS_LABEL[status] })),
+          ]}
+        />
       </div>
 
       <div className="flex-1 overflow-y-auto">

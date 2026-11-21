@@ -899,6 +899,16 @@ async function harness(
   const plain = optionsOf();
   check("S1 tanpa pilihan: model & penalaran dari .env", plain.model === CONFIG.models.engineer && plain.effort === CONFIG.effort.engineer, plain);
   check("S2 proses Claude memakai folder akun app", plain.env?.CLAUDE_CONFIG_DIR === CONFIG.claudeDir, plain.env?.CLAUDE_CONFIG_DIR);
+  {
+    // Larangan Artifact pemilik: ditolak di aturan deny (berlaku di semua mode) dan tidak ditawarkan ke model.
+    const opts = plain as unknown as { disallowedTools?: string[]; settings?: { permissions?: { deny?: string[] } } };
+    const artifacts = ["Artifact", "ArtifactComments", "ArtifactData"];
+    check(
+      "S2b bot: tool Artifact ditolak dan disembunyikan",
+      artifacts.every((tool) => opts.disallowedTools?.includes(tool) && opts.settings?.permissions?.deny?.includes(tool)),
+      { disallowed: opts.disallowedTools, deny: opts.settings?.permissions?.deny?.slice(0, 6) },
+    );
+  }
 
   updateSettings({ claudeModels: { engineer: "claude-uji-pengaturan" }, efforts: { engineer: "max" } });
   const set = optionsOf();
@@ -914,6 +924,33 @@ async function harness(
   const reset = optionsOf();
   check("S8 null = kembali ke .env", reset.model === CONFIG.models.engineer && reset.effort === CONFIG.effort.engineer, reset);
   check("S9 tanpa Pengaturan, penugasan Claude tidak mengunci model", resolveEngine("engineer", "claude").model === undefined);
+
+  // Kurator: mesin dan model Gemini sendiri.
+  const { getSettings, modelFor } = await import("../server/settings.ts");
+  check("S9b mesin kurator bawaan Claude", getSettings().curatorEngine === "claude");
+  updateSettings({ curatorEngine: "antigravity", geminiModels: { curator: "gemini-uji-kurator" } });
+  check("S9c mesin dan model Gemini kurator tersimpan", getSettings().curatorEngine === "antigravity" && modelFor("curator", "antigravity") === "gemini-uji-kurator");
+  updateSettings({ curatorEngine: "bukan-mesin" as never, geminiModels: { curator: "nama model; rm" } });
+  check("S9d nilai tidak sah diabaikan", getSettings().curatorEngine === "claude" && modelFor("curator", "antigravity") === "gemini-uji-kurator", getSettings());
+  updateSettings({ curatorEngine: "claude", geminiModels: { curator: null } });
+
+  // Panel Tanya: mesin, model, dan penalaran bawaan sendiri.
+  const { effortFor } = await import("../server/settings.ts");
+  check("S9e mesin Tanya bawaan Claude, model Tanya = MODEL_ASK", getSettings().askEngine === "claude" && modelFor("ask", "claude") === CONFIG.models.ask);
+  check("S9f MODEL_ASK kosong → model bot QA", process.env.MODEL_ASK ? true : CONFIG.models.ask === CONFIG.models.qa, CONFIG.models);
+  updateSettings({ askEngine: "antigravity", geminiModels: { ask: "gemini-uji-tanya" }, claudeModels: { ask: "claude-uji-tanya" }, efforts: { ask: "low" } });
+  check(
+    "S9g mesin, model, dan penalaran Tanya tersimpan",
+    getSettings().askEngine === "antigravity" &&
+      modelFor("ask", "antigravity") === "gemini-uji-tanya" &&
+      modelFor("ask", "claude") === "claude-uji-tanya" &&
+      effortFor("ask") === "low",
+    getSettings(),
+  );
+  updateSettings({ askEngine: "bukan-mesin" as never });
+  check("S9h mesin Tanya tidak sah → Claude", getSettings().askEngine === "claude", getSettings().askEngine);
+  updateSettings({ geminiModels: { ask: null }, claudeModels: { ask: null }, efforts: { ask: null } });
+  check("S9i null = kembali ke .env", modelFor("ask", "claude") === CONFIG.models.ask && effortFor("ask") === CONFIG.effort.ask);
 
   const chosen = createTask({ title: "model", description: "m", role: "engineer", projectId: "P-uji", engine: "claude", model: "claude-pilihan" });
   const first = chosen.assignments[0];

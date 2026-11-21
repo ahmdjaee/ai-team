@@ -14,7 +14,7 @@ import { markAccountExpired } from "../accounts/index.ts";
 import { CONFIG } from "../config.ts";
 import { effortFor, modelFor } from "../settings.ts";
 import { contextBlock, workspaceForTask } from "../context.ts";
-import { ROLES, permissionsFor, resolvePermissionMode } from "../roles.ts";
+import { ARTIFACT_TOOLS, ROLES, permissionsFor, resolvePermissionMode } from "../roles.ts";
 import { createTeamServer } from "../team/mcp.ts";
 import type { AskQuestion, AutonomyMode, ContextUsage, RoleId, UiEvent, WorkerStatus } from "../types.ts";
 import { bus } from "./bus.ts";
@@ -366,7 +366,8 @@ export class TaskRunner implements AgentRunner {
       },
       permissionMode: resolvePermissionMode(role, this.mode),
       allowedTools: role.allowedTools,
-      disallowedTools: role.disallowedTools,
+      // Tool Artifact (halaman claude.ai) tidak ditawarkan ke model sama sekali; deny-nya ada di DENY_ALWAYS.
+      disallowedTools: [...role.disallowedTools, ...ARTIFACT_TOOLS],
       mcpServers,
       hooks: guardHooks(this.taskId, this.role),
       includePartialMessages: true,

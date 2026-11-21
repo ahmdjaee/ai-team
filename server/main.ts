@@ -96,9 +96,7 @@ const realtime = attachRealtime(server);
 async function shutdown(signal: string): Promise<void> {
   console.log(`\n${signal} — menutup sesi agen…`);
   realtime.close();
-  askHub.closeAll();
-  curator.closeAll();
-  await scheduler.closeAll();
+  await Promise.all([askHub.closeAll(), curator.closeAll(), scheduler.closeAll()]);
   await stopGeminiKeyring();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3_000).unref();

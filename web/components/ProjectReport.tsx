@@ -13,6 +13,8 @@ import {
 import { renderMarkdown } from "../markdown.ts";
 import { subscribe } from "../realtime.ts";
 import { taskPath } from "../routes.tsx";
+import { ENGINE_SHORT } from "./EnginePicker.tsx";
+import { Select } from "./Select.tsx";
 import { ProjectRecap } from "./ProjectRecap.tsx";
 
 export const SEVERITY_STYLE: Record<FindingSeverity, string> = {
@@ -230,9 +232,11 @@ export function ProjectReport({ projectId, search }: { projectId: string; search
                 : curator.scheduledAt
                   ? `Kurasi otomatis dijadwalkan ${stamp(curator.scheduledAt)}`
                   : `Dikurasi ${stamp(curator.lastRunAt)}`}
+              {curator.engine ? ` · kurator di ${ENGINE_SHORT[curator.engine]}` : " · belum ada akun AI untuk kurator"}
               {curator.pending > 0 ? ` · ${curator.pending} laporan belum dikurasi` : ""}
               {curator.inbox > 0 ? ` · ${curator.inbox} catatan memori menunggu` : ""}
               {curator.costUsd > 0 ? ` · biaya kurator $${curator.costUsd.toFixed(4)}` : ""}
+              {curator.engine === "antigravity" ? " (Gemini tidak melaporkan biaya)" : ""}
             </p>
             {curator.inProgress.length > 0 && (
               <p data-report-in-progress className="text-xs text-muted">
@@ -261,8 +265,12 @@ export function ProjectReport({ projectId, search }: { projectId: string; search
           </a>
           <button
             onClick={sync}
-            disabled={curator.running}
-            title="Jalankan kurator sekarang: tautkan laporan baru ke register, perbarui status, rapikan memori"
+            disabled={curator.running || !curator.engine}
+            title={
+              curator.engine
+                ? "Jalankan kurator sekarang: tautkan laporan baru ke register, perbarui status, rapikan memori"
+                : "Kurator butuh akun Claude atau Gemini — tambahkan di Pengaturan → Akun AI"
+            }
             className="shrink-0 rounded-lg border border-line-strong px-3 py-1.5 text-sm text-ink hover:bg-hover disabled:opacity-40"
           >
             {curator.running ? "Mengurasi…" : "Sync"}
@@ -293,18 +301,14 @@ export function ProjectReport({ projectId, search }: { projectId: string; search
               </button>
             ))}
             {areas.length > 0 && (
-              <select
+              <Select
                 value={area}
-                onChange={(e) => setArea(e.target.value)}
-                className="ml-1 rounded border border-line bg-page px-1 py-0.5 text-xs text-ink"
-              >
-                <option value="">semua area</option>
-                {areas.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
+                onChange={setArea}
+                ariaLabel="Saring menurut area"
+                size="sm"
+                className="ml-1"
+                options={[{ value: "", label: "semua area" }, ...areas.map((name) => ({ value: name, label: name }))]}
+              />
             )}
           </span>
         </div>
@@ -497,39 +501,33 @@ const FindingRow = memo(function FindingRow({
 
           <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2 text-xs">
             <span className="text-faint">Koreksi:</span>
-            <select
+            <Select
               value={status}
-              onChange={(e) => {
-                setStatus(e.target.value as FindingStatus);
+              onChange={(value) => {
+                setStatus(value as FindingStatus);
                 setMergeInto("");
               }}
-              className="rounded border border-line bg-page px-1 py-0.5 text-ink"
-            >
-              {STATUSES.map((value) => (
-                <option key={value} value={value}>
-                  {STATUS_LABEL[value]}
-                </option>
-              ))}
-            </select>
+              ariaLabel={`Status ${finding.id}`}
+              size="sm"
+              options={STATUSES.map((value) => ({ value, label: STATUS_LABEL[value] }))}
+            />
             <input
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder="bukti / alasan (wajib untuk menutup)"
               className="min-w-48 flex-1 rounded border border-line bg-page px-1.5 py-0.5 text-ink"
             />
-            <select
+            <Select
               value={mergeInto}
-              onChange={(e) => setMergeInto(e.target.value)}
+              onChange={setMergeInto}
+              ariaLabel={`Gabungkan ${finding.id} ke temuan lain`}
               title="Gabungkan sebagai duplikat dari temuan lain"
-              className="rounded border border-line bg-page px-1 py-0.5 text-ink"
-            >
-              <option value="">— gabung ke…</option>
-              {mergeTargets.map((other) => (
-                <option key={other.id} value={other.id}>
-                  {other.id} · {other.title.slice(0, 40)}
-                </option>
-              ))}
-            </select>
+              size="sm"
+              options={[
+                { value: "", label: "— gabung ke…" },
+                ...mergeTargets.map((other) => ({ value: other.id, label: `${other.id} · ${other.title.slice(0, 40)}`, description: other.title.length > 40 ? other.title : undefined })),
+              ]}
+            />
             <button
               onClick={save}
               disabled={!mergeInto && status === finding.status}

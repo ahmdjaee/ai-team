@@ -24,7 +24,7 @@ import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import { z } from "zod";
 import { onAccountsChanged } from "./accounts/index.ts";
-import { askHub, askModels } from "./agent/ask.ts";
+import { askDefaults, askHub } from "./agent/ask.ts";
 import { bus } from "./agent/bus.ts";
 import { scheduler } from "./agent/scheduler.ts";
 import { control } from "./browser/control.ts";
@@ -181,7 +181,8 @@ function taskTopic(taskId: string, after: number | undefined, emit: Emit): (() =
 
 function askTopic(taskId: string, emit: Emit): (() => void) | string {
   if (!getTask(taskId)) return "tugas tidak ditemukan";
-  emit({ type: "snapshot", ...askHub.state(taskId), models: askModels() });
+  // Mesin dan daftar model dibaca panel dari akun (topik global); di sini hanya bawaan Pengaturan.
+  emit({ type: "snapshot", ...askHub.state(taskId), defaults: askDefaults() });
   return askHub.subscribe(taskId, (event) => emit(event, event.type === "delta"));
 }
 

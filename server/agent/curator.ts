@@ -14,9 +14,11 @@ import { createSdkMcpServer, query, tool, type CanUseTool, type Options } from "
 import { z } from "zod";
 import { notifyProject } from "../changes.ts";
 import { claudeEnv } from "../accounts/claude.ts";
-import { engineUsable } from "../accounts/index.ts";
+import { pickEngine } from "../accounts/index.ts";
 import { CONFIG } from "../config.ts";
-import { effortFor, modelFor } from "../settings.ts";
+import { AgyChat, type ChatOptions } from "../engines/antigravity/chat.ts";
+import { effortFor, getSettings, modelFor } from "../settings.ts";
+import type { EngineId } from "../types.ts";
 import {
   COVERAGE_STATES,
   FINDING_SEVERITIES,
@@ -40,7 +42,7 @@ import {
 } from "../findings.ts";
 import { fitMemory, replaceSection } from "../memory.ts";
 import { getProject, listProjects, projectDir, readProjectMemory, workspaceForProject, writeProjectMemory } from "../projects.ts";
-import { DENY_ALWAYS } from "../roles.ts";
+import { ARTIFACT_TOOLS, DENY_ALWAYS } from "../roles.ts";
 import { getTask } from "../tasks.ts";
 import { bus } from "./bus.ts";
 import { scheduler } from "./scheduler.ts";
@@ -61,8 +63,18 @@ const ACTOR = "kurator";
 const NOTES_MAX = 8_000;
 const READ_TOOLS = ["Read", "Grep", "Glob"];
 
+/** Pesan saat kurator tidak bisa berjalan karena tidak ada akun yang siap. */
+export const CURATOR_NEEDS_ACCOUNT = "Kurator butuh akun Claude atau Gemini — tambahkan di Pengaturan → Akun AI";
+
+/** Mesin kurator: pilihan Pengaturan → Bot kalau akunnya siap, kalau tidak mesin lain yang siap. */
+export function curatorEngine(): EngineId | undefined {
+  return pickEngine(getSettings().curatorEngine);
+}
+
 export type CuratorStatus = {
   running: boolean;
+  /** Mesin putaran berikutnya; kosong = tidak ada akun yang siap. */
+  engine?: EngineId;
   scheduledAt?: string;
   lastRunAt?: string;
   lastError?: string;
@@ -349,7 +361,7 @@ function options(projectId: string, abort: AbortController): Options {
     settingSources: [],
     settings: { permissions: { allow: [...READ_TOOLS, "mcp__curator__*"], ask: [], deny: [...denied, ...DENY_ALWAYS] } },
     allowedTools: [...READ_TOOLS, "mcp__curator__*"],
-    disallowedTools: denied,
+    disallowedTools: [...denied, ...ARTIFACT_TOOLS],
     permissionMode: "default",
     canUseTool: allowTool,
     mcpServers: { curator: curatorServer(projectId) },
@@ -360,15 +372,38 @@ function options(projectId: string, abort: AbortController): Options {
   };
 }
 
+type RoundOutcome = { costUsd: number; failure?: string };
+
+/** Satu putaran di Claude Agent SDK, dengan server MCP kurator in-process. */
+async function runClaude(projectId: string, prompt: string, abort: AbortController): Promise<RoundOutcome> {
+  let costUsd = 0;
+  let failure: string | undefined;
+  const instance = query({ prompt, options: options(projectId, abort) });
+  for await (const message of instance) {
+    if (message.type !== "result") continue;
+    const result = message as unknown as Record<string, unknown>;
+    if (typeof result.total_cost_usd === "number") costUsd = result.total_cost_usd;
+    if (result.subtype !== "success" || result.is_error === true) {
+      failure = `kurator berhenti: ${String(result.subtype)}${typeof result.result === "string" ? ` — ${result.result.slice(0, 300)}` : ""}`;
+    }
+  }
+  return { costUsd, failure };
+}
+
 // ---------- penjadwal ----------
 
-class Curator {
+export class Curator {
+  /** Uji menyuntik agen ACP palsu; server memakai `agy` dan keyring akun Gemini app. */
+  constructor(private readonly gemini: Pick<ChatOptions, "launch" | "accountEnv"> = {}) {}
+
   private readonly running = new Set<string>();
   /** Ada pemicu baru saat kurasi berjalan — jalankan lagi sesudahnya. */
   private readonly again = new Set<string>();
   private readonly timers = new Map<string, { timer: NodeJS.Timeout; at: string }>();
   private readonly errors = new Map<string, string>();
   private readonly aborts = new Map<string, AbortController>();
+  /** Sesi Gemini yang sedang berjalan, untuk ditutup saat server dimatikan. */
+  private readonly chats = new Set<AgyChat>();
 
   /** Tugas selesai → kurasi setelah jeda, supaya tugas yang selesai berdekatan digabung. */
   watch(): void {
@@ -411,13 +446,17 @@ class Curator {
 
   status(projectId: string): CuratorStatus {
     const state = readCuration(projectId);
+    const engine = curatorEngine();
+    const error = this.errors.get(projectId);
     return {
       running: this.running.has(projectId),
       scheduledAt: this.timers.get(projectId)?.at,
       lastRunAt: state.lastRunAt,
-      lastError: this.errors.get(projectId) ?? state.lastError,
+      // "Butuh akun" sudah basi begitu ada akun yang siap.
+      lastError: (error === CURATOR_NEEDS_ACCOUNT && engine ? undefined : error) ?? state.lastError,
       costUsd: state.costUsd,
       runs: state.runs,
+      engine,
       pending: pendingSources(projectId).length,
       inProgress: inProgressSources(projectId),
       inbox: readInbox(projectId).length,
@@ -427,11 +466,11 @@ class Curator {
   /** Jalankan sekarang. Kalau sedang berjalan, satu putaran tambahan dijadwalkan sesudahnya. */
   async run(projectId: string, force = false): Promise<void> {
     if (!getProject(projectId)) return;
-    // Kurator berjalan di Claude. Tanpa akun Claude yang siap, putaran dilewati; sumbernya tetap
-    // tertunda dan diproses saat kurator berjalan lagi setelah akunnya ditambahkan.
-    const usable = engineUsable("claude");
-    if (!usable.ok) {
-      this.errors.set(projectId, `Kurator butuh akun Claude: ${usable.reason}`);
+    // Tanpa akun yang siap, putaran dilewati; sumbernya tetap tertunda dan diproses saat kurator
+    // berjalan lagi setelah akunnya ditambahkan.
+    const engine = curatorEngine();
+    if (!engine) {
+      this.errors.set(projectId, CURATOR_NEEDS_ACCOUNT);
       notifyProject(projectId);
       return;
     }
@@ -449,7 +488,7 @@ class Curator {
         const needsState = round === 1 && !readState(projectId).trim() && readRegister(projectId).findings.length > 0;
         const needsMemory = round === 1 && notesLength(projectId) > NOTES_MAX;
         if (sources.length === 0 && !inboxAt && !needsState && !needsMemory && !(force && round === 1)) break;
-        await this.round(projectId, sources, round, inboxAt);
+        await this.round(projectId, sources, round, inboxAt, engine);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -463,14 +502,46 @@ class Curator {
     }
   }
 
-  /** Saat server dimatikan: hentikan kurator yang sedang berjalan supaya proses Claude-nya tidak tertinggal. */
-  closeAll(): void {
+  /** Saat server dimatikan: hentikan kurator yang sedang berjalan supaya proses agennya tidak tertinggal. */
+  async closeAll(): Promise<void> {
     for (const abort of this.aborts.values()) abort.abort(new Error("server dimatikan"));
     for (const { timer } of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
+    // agy berjalan di process group sendiri: tanpa ditutup di sini, ia tertinggal setelah server keluar.
+    await Promise.all([...this.chats].map((chat) => chat.close()));
   }
 
-  private async round(projectId: string, sources: PendingSource[], round: number, inboxAt?: string): Promise<void> {
+  /** Satu putaran di Gemini: sesi `agy` hanya-baca dengan server MCP kurator lewat HTTP. */
+  private async runGemini(projectId: string, prompt: string, abort: AbortController): Promise<RoundOutcome> {
+    const chat = new AgyChat({
+      ...this.gemini,
+      cwd: workspaceForProject(projectId),
+      additionalDirectories: [CONFIG.tasksDir, projectDir(projectId)],
+      areaDir: CONFIG.tasksDir,
+      systemPrompt: PERSONA,
+      mcp: { curator: () => curatorServer(projectId).instance },
+      model: modelFor("curator", "antigravity"),
+      effort: effortFor("curator"),
+      onNotice: (text) => appendLog(projectId, { by: ACTOR, action: "notice", detail: text }),
+    });
+    this.chats.add(chat);
+    try {
+      const reply = await chat.prompt(prompt, abort.signal);
+      if (reply.stopReason === "end_turn") return { costUsd: 0 };
+      return { costUsd: 0, failure: `kurator berhenti: ${reply.stopReason}${reply.text ? ` — ${reply.text.slice(0, 300)}` : ""}` };
+    } finally {
+      this.chats.delete(chat);
+      await chat.close();
+    }
+  }
+
+  private async round(
+    projectId: string,
+    sources: PendingSource[],
+    round: number,
+    inboxAt: string | undefined,
+    engine: EngineId,
+  ): Promise<void> {
     const release = await scheduler.acquireSlot();
     let costUsd = 0;
     let failure: string | undefined;
@@ -480,15 +551,10 @@ class Curator {
     timeout.unref();
     notesWritten.delete(projectId);
     try {
-      const instance = query({ prompt: workMessage(projectId, sources, round), options: options(projectId, abort) });
-      for await (const message of instance) {
-        if (message.type !== "result") continue;
-        const result = message as unknown as Record<string, unknown>;
-        if (typeof result.total_cost_usd === "number") costUsd = result.total_cost_usd;
-        if (result.subtype !== "success" || result.is_error === true) {
-          failure = `kurator berhenti: ${String(result.subtype)}${typeof result.result === "string" ? ` — ${result.result.slice(0, 300)}` : ""}`;
-        }
-      }
+      const prompt = workMessage(projectId, sources, round);
+      const outcome = engine === "claude" ? await runClaude(projectId, prompt, abort) : await this.runGemini(projectId, prompt, abort);
+      costUsd = outcome.costUsd;
+      failure = outcome.failure;
     } catch (error) {
       failure = `kurator berhenti: ${error instanceof Error ? error.message : String(error)}`;
     } finally {
@@ -515,7 +581,9 @@ class Curator {
     appendLog(projectId, {
       by: ACTOR,
       action: "run",
-      detail: `putaran ${round}: ${sources.map((source) => source.taskId).join(", ") || "tanpa sumber baru"} · $${costUsd.toFixed(4)}`,
+      detail: `putaran ${round}: ${sources.map((source) => source.taskId).join(", ") || "tanpa sumber baru"} · ${
+        engine === "claude" ? `$${costUsd.toFixed(4)}` : "Gemini · biaya tidak dilaporkan"
+      }`,
     });
   }
 }

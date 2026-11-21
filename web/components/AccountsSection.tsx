@@ -12,8 +12,8 @@ const STATE_BADGE: Record<AccountView["state"], { text: string; className: strin
 };
 
 const ABOUT: Record<ProviderId, string> = {
-  claude: "Login langganan Claude (Pro/Max). Dipakai bot, panel Tanya, dan kurator memori.",
-  gemini: "Login Google lewat Antigravity CLI. Dipakai bot yang Anda pasang ke mesin Gemini.",
+  claude: "Login langganan Claude (Pro/Max). Dipakai bot, panel Tanya, dan kurator memori yang memakai Claude.",
+  gemini: "Login Google lewat Antigravity CLI. Dipakai bot, panel Tanya, dan kurator memori yang memakai Gemini.",
 };
 
 export function ago(iso: string | undefined, now = Date.now()): string | undefined {

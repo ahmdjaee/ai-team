@@ -85,6 +85,12 @@ export function usableEngines(): EngineId[] {
   return PROVIDER_IDS.map((provider) => PROVIDER_ENGINE[provider]).filter((engine) => engineUsable(engine).ok);
 }
 
+/** Mesin pilihan kalau akunnya siap, kalau tidak mesin lain yang siap; undefined = tidak ada akun siap. */
+export function pickEngine(preferred: EngineId): EngineId | undefined {
+  if (engineUsable(preferred).ok) return preferred;
+  return usableEngines()[0];
+}
+
 /** Galat login saat tugas berjalan: tandai akun perlu login ulang supaya UI dan scheduler tahu. */
 export function markAccountExpired(provider: ProviderId, reason: string): void {
   const record = getAccount(provider);

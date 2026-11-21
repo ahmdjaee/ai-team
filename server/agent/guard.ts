@@ -33,23 +33,31 @@ function ownerRequestedCommit(taskId: string): boolean {
  * Penilaian pagar keras untuk satu perintah shell tugas ini. Dipakai PreToolUse hook Claude dan
  * hook Antigravity, supaya kedua mesin menolak dan menanyakan hal yang persis sama.
  */
-export function commandVerdict(
-  taskId: string,
-  role: RoleId,
-  command: string,
-): { decision: "deny" | "ask" | "pass"; message: string } {
-  const verdict = classifyCommand(command, {
-    // Workspace project tugas ini — bukan workspace global.
-    workspaceDir: workspaceForTask(taskId),
-    taskDir: taskDir(taskId),
-    // Hanya Engineer yang commit otomatis; role lain punya deny atau kartu persetujuan.
-    commitRequested: role === "engineer" ? ownerRequestedCommit(taskId) : undefined,
-    protectedPaths: protectedCommandPaths(),
-  });
+export type CommandVerdict = { decision: "deny" | "ask" | "pass"; message: string };
+
+function toVerdict(verdict: ReturnType<typeof classifyCommand>): CommandVerdict {
   if (verdict.decision === "pass") return { decision: "pass", message: "" };
   const label = verdict.category ? ` · ${CATEGORY_LABEL[verdict.category]}` : "";
   const head = verdict.decision === "deny" ? "Ditolak pagar keras" : "Perlu persetujuan owner";
   return { decision: verdict.decision, message: `${head}${label}: ${verdict.reason}.` };
+}
+
+export function commandVerdict(taskId: string, role: RoleId, command: string): CommandVerdict {
+  return toVerdict(
+    classifyCommand(command, {
+      // Workspace project tugas ini — bukan workspace global.
+      workspaceDir: workspaceForTask(taskId),
+      taskDir: taskDir(taskId),
+      // Hanya Engineer yang commit otomatis; role lain punya deny atau kartu persetujuan.
+      commitRequested: role === "engineer" ? ownerRequestedCommit(taskId) : undefined,
+      protectedPaths: protectedCommandPaths(),
+    }),
+  );
+}
+
+/** Pagar keras untuk sesi tanpa tugas sendiri (kurator project): area kerjanya diberikan pemanggil. */
+export function commandVerdictIn(workspaceDir: string, areaDir: string, command: string): CommandVerdict {
+  return toVerdict(classifyCommand(command, { workspaceDir, taskDir: areaDir, protectedPaths: protectedCommandPaths() }));
 }
 
 /**

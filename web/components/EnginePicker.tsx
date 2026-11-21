@@ -1,4 +1,5 @@
 import type { EngineId, EngineInfo, ModelOption, RoleId, SettingsView } from "../api.ts";
+import { Select } from "./Select.tsx";
 
 export { useEngines, usableEngine } from "../accounts.ts";
 
@@ -30,6 +31,7 @@ export function EnginePicker({
   disabled,
   onChange,
   size = "md",
+  defaultLabel = "Bawaan bot",
 }: {
   engines?: EngineInfo[];
   engine: EngineId;
@@ -39,6 +41,8 @@ export function EnginePicker({
   disabled?: boolean;
   onChange: (engine: EngineId, model?: string) => void;
   size?: "sm" | "md";
+  /** Teks opsi model kosong, mis. "Bawaan Tanya". */
+  defaultLabel?: string;
 }) {
   const pad = size === "sm" ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs";
   const info = engines?.find((item) => item.id === engine);
@@ -68,22 +72,19 @@ export function EnginePicker({
           );
         })}
       </div>
-      <select
+      <Select
         value={model ?? ""}
+        options={[
+          { value: "", label: `${defaultLabel}${fallback ? ` (${fallback})` : engine === "antigravity" ? " (bawaan agy)" : ""}` },
+          ...models.map((item) => ({ value: item.id, label: item.name, description: item.description })),
+          ...(model && !models.some((item) => item.id === model) ? [{ value: model, label: `${model} (tidak terdaftar)` }] : []),
+        ]}
+        onChange={(value) => onChange(engine, value || undefined)}
         disabled={disabled || !info?.available}
-        onChange={(event) => onChange(engine, event.target.value || undefined)}
-        aria-label={`Model ${ENGINE_SHORT[engine]}`}
-        title={models.find((item) => item.id === model)?.description}
-        className={`min-w-0 max-w-[16rem] rounded-lg border border-line bg-page ${pad} text-ink`}
-      >
-        <option value="">Bawaan bot{fallback ? ` (${fallback})` : engine === "antigravity" ? " (bawaan agy)" : ""}</option>
-        {models.map((item) => (
-          <option key={item.id} value={item.id} title={item.description}>
-            {item.name}
-          </option>
-        ))}
-        {model && !models.some((item) => item.id === model) && <option value={model}>{model} (tidak terdaftar)</option>}
-      </select>
+        ariaLabel={`Model ${ENGINE_SHORT[engine]}`}
+        size={size}
+        className="max-w-[16rem]"
+      />
       {info && !info.available && <span className="text-[11px] text-tag-yellow-ink">{info.reason}</span>}
     </div>
   );

@@ -28,10 +28,18 @@ export type RoleDef = {
   producesReport: boolean;
 };
 
+/**
+ * Tool Artifact Claude Code: membuat/mengubah halaman claude.ai. Pemilik melarang Artifact di laptop ini, dan
+ * larangan di `~/.claude/CLAUDE.md` tidak terbaca sesi app (folder login app terpisah) — jadi ditolak di sini,
+ * di semua mode (aturan deny juga berlaku di mode Auto), dan disembunyikan dari model lewat `disallowedTools`.
+ */
+export const ARTIFACT_TOOLS = ["Artifact", "ArtifactComments", "ArtifactData"];
+
 export const DENY_ALWAYS = [
-  // Konektor claude.ai milik akun (Figma, Mobbin, dll.) ikut menempel ke sesi CLI.
+  // Konektor claude.ai milik akun (Figma, Mobbin, Claude Docs, dll.) ikut menempel ke sesi CLI.
   // Tim ini hanya boleh memakai tool buatan aplikasi ini, bukan konektor pribadi Anda.
   "mcp__claude_ai_*",
+  ...ARTIFACT_TOOLS,
   "Bash(sudo:*)",
   "Bash(mkfs:*)",
   "Bash(dd:*)",

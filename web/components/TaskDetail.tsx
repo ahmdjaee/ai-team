@@ -27,6 +27,7 @@ import { TaskNotes } from "./TaskNotes.tsx";
 import { TaskReport } from "./TaskReport.tsx";
 import { TaskSettings } from "./TaskSettings.tsx";
 import { TaskThread } from "./TaskThread.tsx";
+import { Select } from "./Select.tsx";
 
 const ASK_KEY = "ai-team-ask";
 
@@ -417,18 +418,18 @@ export function TaskDetail({
           <ContextMeter usage={liveContext ?? task.assignments.at(-1)?.context} />
           <div className="ml-auto flex shrink-0 items-center gap-2 text-xs">
             <EngineBadge engine={task.assignments.at(-1)?.engine} model={task.assignments.at(-1)?.model} />
-            <select
+            <Select
               value={detail.mode}
-              onChange={(e) => void api.setMode(task.id, e.target.value as AutonomyMode).then(onChanged)}
+              onChange={(value) => void api.setMode(task.id, value as AutonomyMode).then(onChanged)}
+              ariaLabel="Mode tugas"
               title={MODE_NOTE[detail.mode]}
-              className="rounded-lg border border-line bg-page px-2 py-1 text-muted"
-            >
-              {(["auto", "ask", "readonly"] as AutonomyMode[]).map((mode) => (
-                <option key={mode} value={mode}>
-                  Mode: {MODE_LABEL[mode]}
-                </option>
-              ))}
-            </select>
+              muted
+              options={(["auto", "ask", "readonly"] as AutonomyMode[]).map((mode) => ({
+                value: mode,
+                label: `Mode: ${MODE_LABEL[mode]}`,
+                description: MODE_NOTE[mode],
+              }))}
+            />
             {busy && (
               <button
                 onClick={() => void api.interrupt(task.id).then(onChanged)}

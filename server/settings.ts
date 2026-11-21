@@ -12,18 +12,22 @@ export type NotificationSettings = {
   onlyWhenHidden: boolean;
 };
 
-/** Bot plus kurator memori: semua yang punya model dan tingkat penalaran sendiri. */
-export type ModelKey = RoleId | "curator";
+/** Bot, kurator memori, dan panel Tanya: semua yang punya model dan tingkat penalaran sendiri. */
+export type ModelKey = RoleId | "curator" | "ask";
 
 export type Settings = {
   modes: Record<RoleId, AutonomyMode>;
   /** Mesin bawaan tiap bot untuk tugas dan operan baru; penugasan yang sudah jalan tidak ikut berubah. */
   engines: Record<RoleId, EngineId>;
-  /** Model Antigravity per bot (id dari daftar model `agy`); kosong = model bawaan agy. */
-  geminiModels: Partial<Record<RoleId, string>>;
-  /** Model Claude per bot dan kurator (id dari daftar model akun); kosong = `MODEL_*` di `.env`. */
+  /** Mesin kurator memori; kalau akunnya belum siap, kurator memakai mesin lain yang siap. */
+  curatorEngine: EngineId;
+  /** Mesin bawaan panel Tanya (bisa diganti per pertanyaan); kalau akunnya belum siap, mesin lain yang siap. */
+  askEngine: EngineId;
+  /** Model Antigravity per bot, kurator, dan Tanya (id dari daftar model `agy`); kosong = model bawaan agy. */
+  geminiModels: Partial<Record<ModelKey, string>>;
+  /** Model Claude per bot, kurator, dan Tanya (id dari daftar model akun); kosong = `MODEL_*` di `.env`. */
   claudeModels: Partial<Record<ModelKey, string>>;
-  /** Tingkat penalaran per bot dan kurator; kosong = `EFFORT_*` di `.env`. */
+  /** Tingkat penalaran per bot, kurator, dan Tanya; kosong = `EFFORT_*` di `.env`. */
   efforts: Partial<Record<ModelKey, Effort>>;
   notifications: NotificationSettings;
 };
@@ -34,7 +38,7 @@ export type ModelDefaults = { claudeModels: Record<ModelKey, string>; efforts: R
 const PATH = join(CONFIG.dataDir, "settings.json");
 const MODES: AutonomyMode[] = ["auto", "ask", "readonly"];
 const ROLE_KEYS: RoleId[] = ["qa", "engineer", "devops", "uiux"];
-const MODEL_KEYS: ModelKey[] = [...ROLE_KEYS, "curator"];
+const MODEL_KEYS: ModelKey[] = [...ROLE_KEYS, "curator", "ask"];
 /**
  * Id model: huruf, angka, titik, tanda hubung, garis bawah, dan kurung siku (mis.
  * `gemini-3.8-flash`, `claude-opus-5-5`, `sonnet[1m]`). Tidak ada spasi atau karakter shell.
@@ -60,6 +64,8 @@ function defaults(): Settings {
       uiux: envMode("AUTONOMY_UIUX"),
     },
     engines: { qa: "claude", engineer: "claude", devops: "claude", uiux: "claude" },
+    curatorEngine: "claude",
+    askEngine: "claude",
     geminiModels: {},
     claudeModels: {},
     efforts: {},
@@ -72,11 +78,13 @@ function sanitize(settings: Settings): Settings {
   for (const role of ROLE_KEYS) {
     if (!MODES.includes(settings.modes[role])) settings.modes[role] = "ask";
     if (!ENGINE_IDS.includes(settings.engines[role])) settings.engines[role] = "claude";
-    const model = settings.geminiModels[role];
-    if (model !== undefined && (typeof model !== "string" || !MODEL_ID.test(model))) delete settings.geminiModels[role];
   }
+  if (!ENGINE_IDS.includes(settings.curatorEngine)) settings.curatorEngine = "claude";
+  if (!ENGINE_IDS.includes(settings.askEngine)) settings.askEngine = "claude";
   for (const key of Object.keys(settings.geminiModels)) {
-    if (!ROLE_KEYS.includes(key as RoleId)) delete settings.geminiModels[key as RoleId];
+    if (!MODEL_KEYS.includes(key as ModelKey) || !validModelId(settings.geminiModels[key as ModelKey])) {
+      delete settings.geminiModels[key as ModelKey];
+    }
   }
   for (const key of Object.keys(settings.claudeModels)) {
     if (!MODEL_KEYS.includes(key as ModelKey) || !validModelId(settings.claudeModels[key as ModelKey])) {
@@ -105,6 +113,8 @@ export function getSettings(): Settings {
       cache = sanitize({
         modes: { ...base.modes, ...(stored.modes ?? {}) },
         engines: { ...base.engines, ...(stored.engines ?? {}) },
+        curatorEngine: stored.curatorEngine ?? base.curatorEngine,
+        askEngine: stored.askEngine ?? base.askEngine,
         geminiModels: record<string>(stored.geminiModels),
         claudeModels: record<string>(stored.claudeModels),
         efforts: record<Effort>(stored.efforts),
@@ -120,7 +130,7 @@ export function getSettings(): Settings {
 }
 
 export type SettingsPatch = Partial<Omit<Settings, "geminiModels" | "claudeModels" | "efforts">> & {
-  geminiModels?: Partial<Record<RoleId, string | null>>;
+  geminiModels?: Partial<Record<ModelKey, string | null>>;
   claudeModels?: Partial<Record<ModelKey, string | null>>;
   efforts?: Partial<Record<ModelKey, Effort | null>>;
 };
@@ -140,6 +150,8 @@ export function updateSettings(patch: SettingsPatch): Settings {
   const next = sanitize({
     modes: { ...current.modes, ...(patch.modes ?? {}) },
     engines: { ...current.engines, ...(patch.engines ?? {}) },
+    curatorEngine: patch.curatorEngine ?? current.curatorEngine,
+    askEngine: patch.askEngine ?? current.askEngine,
     geminiModels: merge(current.geminiModels, patch.geminiModels, validModelId),
     claudeModels: merge(current.claudeModels, patch.claudeModels, validModelId),
     efforts: merge(current.efforts, patch.efforts, isEffort),
@@ -166,8 +178,7 @@ export function geminiModelFor(role: RoleId): string | undefined {
 
 /** Pilihan model di Pengaturan untuk mesin ini, tanpa jatuh ke `.env`; undefined = bawaan. */
 export function modelSetting(key: ModelKey, engine: EngineId): string | undefined {
-  if (engine === "claude") return getSettings().claudeModels[key];
-  return key === "curator" ? undefined : getSettings().geminiModels[key];
+  return engine === "claude" ? getSettings().claudeModels[key] : getSettings().geminiModels[key];
 }
 
 /**

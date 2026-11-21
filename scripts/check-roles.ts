@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { CONFIG } from "../server/config.ts";
 import { ANTIGRAVITY_CODE_DIR, PERSONAL_GEMINI_DIR } from "../server/protected.ts";
 import { findingHeads, reportRounds, verdictOf } from "../server/recap.ts";
-import { ROLES, permissionsFor, resolvePermissionMode } from "../server/roles.ts";
+import { DENY_ALWAYS, ROLES, permissionsFor, resolvePermissionMode } from "../server/roles.ts";
 import { findingStatusTools } from "../server/team/mcp.ts";
 import type { RoleId } from "../server/types.ts";
 
@@ -28,6 +28,16 @@ expect("UI/UX menulis laporan", uiux.producesReport, true);
 expect("UI/UX boleh memakai tool browser", uiux.permissions.allow.includes("mcp__browser__*"), true);
 expect("UI/UX tidak boleh commit", uiux.permissions.deny.includes("Bash(git commit:*)"), true);
 expect("konektor pribadi tetap diblokir", uiux.permissions.deny.includes("mcp__claude_ai_*"), true);
+for (const role of ["qa", "engineer", "devops", "uiux"] as RoleId[]) {
+  // Larangan Artifact pemilik (halaman claude.ai) berlaku untuk semua bot, juga di mode Auto.
+  const deny = permissionsFor(role, WORKSPACE).deny;
+  expect(`${role}: tool Artifact ditolak`, ["Artifact", "ArtifactComments", "ArtifactData"].every((tool) => deny.includes(tool)), true);
+}
+expect(
+  "DENY_ALWAYS (juga dipakai panel Tanya & kurator) menolak Artifact",
+  ["Artifact", "ArtifactComments", "ArtifactData"].every((tool) => DENY_ALWAYS.includes(tool)),
+  true,
+);
 for (const role of ["qa", "engineer", "devops", "uiux"] as RoleId[]) {
   const deny = ROLES[role].permissions.deny;
   const guarded =
@@ -56,7 +66,7 @@ expect("persona termuat", uiux.persona.startsWith("# Peran Anda: Senior UI/UX De
 // Daftar role di web tidak ditangkap typecheck, jadi diperiksa dari sumbernya.
 const webSource = (path: string) => readFileSync(new URL(`../web/${path}`, import.meta.url), "utf8");
 expect("ROLE_IDS web memuat uiux", /ROLE_IDS: RoleId\[\] = \[[^\]]*"uiux"/.test(webSource("routes.tsx")), true);
-expect("filter daftar tugas memuat uiux", webSource("components/TaskList.tsx").includes('value="uiux"'), true);
+expect("filter daftar tugas memuat uiux", /value: "uiux"/.test(webSource("components/TaskList.tsx")), true);
 expect("label thread memuat uiux", /uiux: "UI\/UX"/.test(webSource("components/TaskThread.tsx")), true);
 
 // Laporan mengikuti template persona, jadi mesin rekap harus membacanya tanpa perubahan.
