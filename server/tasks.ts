@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { CONFIG } from "./config.ts";
 import { isDeleted } from "./deleted-tasks.ts";
 import { trimMemory } from "./memory.ts";
@@ -89,6 +89,93 @@ export function writeNotes(id: string, text: string): string {
   writeFileSync(tmp, trimmed);
   renameSync(tmp, notesPath(id));
   return trimmed;
+}
+
+/** Draf pesan chat tugas yang belum dikirim — ikut pindah tab maupun browser. Tidak pernah dibaca bot. */
+export function draftPath(id: string): string {
+  return join(taskDir(id), "draft.json");
+}
+
+export type Draft = { text: string; attachments: string[] };
+
+/** Lampiran draf yang berkasnya sudah tidak ada dibuang diam-diam. */
+export function readDraft(id: string): Draft {
+  try {
+    const raw = JSON.parse(readFileSync(draftPath(id), "utf8")) as Partial<Draft>;
+    const text = typeof raw.text === "string" ? raw.text : "";
+    const attachments = Array.isArray(raw.attachments)
+      ? raw.attachments.filter((file): file is string => typeof file === "string" && Boolean(resolveAttachment(id, file)))
+      : [];
+    return { text, attachments };
+  } catch {
+    return { text: "", attachments: [] };
+  }
+}
+
+/** Draf kosong = filenya dihapus, supaya folder tugas tidak berisi file sisa. */
+export function writeDraft(id: string, draft: Partial<Draft>): Draft {
+  const text = trimMemory(typeof draft.text === "string" ? draft.text : "", NOTES_MAX);
+  const attachments = (Array.isArray(draft.attachments) ? draft.attachments : [])
+    .filter((file): file is string => typeof file === "string" && Boolean(resolveAttachment(id, file)))
+    .slice(0, ATTACHMENTS_PER_MESSAGE);
+  if (!text.trim() && attachments.length === 0) {
+    rmSync(draftPath(id), { force: true });
+    return { text: "", attachments: [] };
+  }
+  mkdirSync(taskDir(id), { recursive: true });
+  const tmp = `${draftPath(id)}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ text, attachments }));
+  renameSync(tmp, draftPath(id));
+  return { text, attachments };
+}
+
+/** Berkas yang Anda lampirkan di chat tugas. Bot membukanya lewat path absolut di pesan. */
+export function attachmentsDir(id: string): string {
+  return join(taskDir(id), "attachments");
+}
+
+export const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+export const ATTACHMENTS_PER_MESSAGE = 10;
+
+/** Nama aman + cap waktu: dua screenshot bernama `image.png` dari clipboard tidak saling menimpa. */
+export function saveAttachment(id: string, originalName: string, data: Buffer): string {
+  const dot = basename(originalName).lastIndexOf(".");
+  const base = basename(originalName);
+  const stem = (dot > 0 ? base.slice(0, dot) : base).replace(/[^\w.-]+/g, "-").replace(/^[-.]+|-+$/g, "").slice(0, 60) || "lampiran";
+  const ext = dot > 0 ? base.slice(dot).replace(/[^\w.]+/g, "").slice(0, 12).toLowerCase() : "";
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  const dir = attachmentsDir(id);
+  mkdirSync(dir, { recursive: true });
+  let file = `${stamp}-${stem}${ext}`;
+  for (let n = 2; existsSync(join(dir, file)); n += 1) file = `${stamp}-${stem}-${n}${ext}`;
+  writeFileSync(join(dir, file), data);
+  return file;
+}
+
+/** Path absolut lampiran, hanya untuk nama polos yang memang ada — penutup path traversal. */
+export function resolveAttachment(id: string, file: string): string | undefined {
+  if (!file || file !== basename(file) || file.startsWith(".")) return undefined;
+  const path = join(attachmentsDir(id), file);
+  try {
+    return statSync(path).isFile() ? path : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function deleteAttachment(id: string, file: string): boolean {
+  const path = resolveAttachment(id, file);
+  if (!path) return false;
+  rmSync(path, { force: true });
+  return true;
+}
+
+/** Pesan untuk bot: teks owner + path absolut lampiran. Thread tetap menampilkan teks aslinya. */
+export function composeAttachmentMessage(id: string, text: string, files: string[]): string {
+  if (files.length === 0) return text;
+  const list = files.map((file) => `- ${resolveAttachment(id, file) ?? join(attachmentsDir(id), file)}`).join("\n");
+  const head = text ? `${text}\n\n` : "";
+  return `${head}Lampiran dari pemilik produk (buka dengan tool baca berkas):\n${list}`;
 }
 
 export function hasNotes(id: string): boolean {
@@ -380,8 +467,9 @@ export function readReport(id: string): string | undefined {
 export type DocInfo = { path: string; size: number; mtime: string };
 
 /** Sudah punya tempat sendiri di UI: tab Laporan, dan mesin aplikasi. */
-// notes.md milik Anda sendiri dan sudah punya tabnya; task.json/thread.jsonl mesin aplikasi.
-const DOC_SKIP_NAMES = new Set(["report.md", "notes.md", "task.json", "thread.jsonl"]);
+// notes.md milik Anda sendiri dan sudah punya tabnya; draft.json isi kotak ketik chat;
+// task.json/thread.jsonl mesin aplikasi.
+const DOC_SKIP_NAMES = new Set(["report.md", "notes.md", "draft.json", "task.json", "thread.jsonl"]);
 const DOC_MAX = 200;
 const DOC_MAX_DEPTH = 3;
 

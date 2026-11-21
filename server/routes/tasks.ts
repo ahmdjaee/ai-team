@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import { Router } from "express";
+import express, { Router } from "express";
 import { curator } from "../agent/curator.ts";
 import { scheduler } from "../agent/scheduler.ts";
 import { BOUNDARY, live } from "../browser/live.ts";
@@ -15,12 +15,20 @@ import { threads } from "../store.ts";
 import { DeleteTaskError, deleteTask } from "../task-delete.ts";
 import { buildTaskFindings } from "../task-report.ts";
 import {
+  ATTACHMENT_MAX_BYTES,
+  ATTACHMENTS_PER_MESSAGE,
   assetsDir,
+  composeAttachmentMessage,
   createTask,
+  deleteAttachment,
+  resolveAttachment,
+  saveAttachment,
   getTask,
   hasNotes,
   isImageName,
+  readDraft,
   readNotes,
+  writeDraft,
   writeNotes,
   listAssets,
   listDocs,
@@ -177,6 +185,27 @@ tasksRouter.put("/tasks/:id/notes", (req, res) => {
   res.json({ text: writeNotes(req.params.id, req.body.text) });
 });
 
+/** Draf kotak ketik chat tugas — disimpan di server supaya ikut saat pindah halaman atau browser. */
+tasksRouter.get("/tasks/:id/draft", (req, res) => {
+  if (!getTask(req.params.id)) {
+    res.status(404).json({ error: "tugas tidak ditemukan" });
+    return;
+  }
+  res.json(readDraft(req.params.id));
+});
+
+tasksRouter.put("/tasks/:id/draft", (req, res) => {
+  if (!getTask(req.params.id)) {
+    res.status(404).json({ error: "tugas tidak ditemukan" });
+    return;
+  }
+  if (typeof req.body?.text !== "string") {
+    res.status(400).json({ error: "text wajib diisi" });
+    return;
+  }
+  res.json(writeDraft(req.params.id, { text: req.body.text, attachments: req.body.attachments }));
+});
+
 /** Ganti nama tugas. Judul hanya metadata, jadi boleh diubah walau tugasnya sedang dikerjakan. */
 tasksRouter.post("/tasks/:id/title", (req, res) => {
   const title = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 140) : "";
@@ -236,16 +265,72 @@ tasksRouter.get("/tasks/:id/live", (req, res) => {
   });
 });
 
+/**
+ * Lampiran chat: body mentah satu berkas, nama aslinya di `?name=`. Disimpan di folder tugas, jadi
+ * bot Claude maupun Gemini bisa membukanya lewat path yang ditulis di pesan.
+ */
+tasksRouter.post(
+  "/tasks/:id/attachments",
+  express.raw({ type: () => true, limit: ATTACHMENT_MAX_BYTES }),
+  (req, res) => {
+    if (!getTask(req.params.id)) {
+      res.status(404).json({ error: "tugas tidak ditemukan" });
+      return;
+    }
+    const name = typeof req.query.name === "string" ? req.query.name : "";
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      res.status(400).json({ error: "berkas kosong" });
+      return;
+    }
+    const file = saveAttachment(req.params.id, name || "lampiran", req.body);
+    res.json({ file, size: req.body.length, image: isImageName(file) });
+  },
+);
+
+tasksRouter.get("/tasks/:id/attachments/:file", (req, res) => {
+  const path = getTask(req.params.id) ? resolveAttachment(req.params.id, req.params.file) : undefined;
+  if (!path) {
+    res.status(404).end();
+    return;
+  }
+  // Berkas kiriman Anda sendiri, tapi tetap jangan biarkan HTML/SVG dijalankan di origin aplikasi.
+  if (!isImageName(path)) res.setHeader("Content-Disposition", `inline; filename="${basename(path)}"`);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Content-Security-Policy", "sandbox");
+  res.sendFile(path);
+});
+
+tasksRouter.delete("/tasks/:id/attachments/:file", (req, res) => {
+  if (!getTask(req.params.id) || !deleteAttachment(req.params.id, req.params.file)) {
+    res.status(404).json({ error: "lampiran tidak ditemukan" });
+    return;
+  }
+  res.json({ ok: true });
+});
+
 tasksRouter.post("/tasks/:id/message", (req, res) => {
   const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
-  if (!text) {
+  const raw: unknown[] = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
+  if (raw.length > ATTACHMENTS_PER_MESSAGE) {
+    res.status(400).json({ error: `maksimal ${ATTACHMENTS_PER_MESSAGE} lampiran per pesan` });
+    return;
+  }
+  const attachments = raw.filter((file): file is string => typeof file === "string");
+  if (attachments.length !== raw.length || attachments.some((file) => !resolveAttachment(req.params.id, file))) {
+    res.status(400).json({ error: "lampiran tidak ditemukan — unggah ulang" });
+    return;
+  }
+  if (!text && attachments.length === 0) {
     res.status(400).json({ error: "text wajib diisi" });
     return;
   }
-  if (!scheduler.send(req.params.id, text)) {
+  const agentText = composeAttachmentMessage(req.params.id, text, attachments);
+  if (!scheduler.send(req.params.id, agentText, { display: text, attachments })) {
     res.status(404).json({ error: "tugas tidak ditemukan" });
     return;
   }
+  // Sudah terkirim: draf dibersihkan di sini, jadi simpan-otomatis yang telat tidak menghidupkannya lagi di browser lain.
+  writeDraft(req.params.id, {});
   res.json({ ok: true });
 });
 

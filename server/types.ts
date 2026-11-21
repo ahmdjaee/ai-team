@@ -29,7 +29,7 @@ export type AskQuestion = {
 export type ContextUsage = { usedTokens: number; maxTokens: number; percentage: number };
 
 export type UiEvent =
-  | { type: "user"; text: string; from?: "owner" | "system" }
+  | { type: "user"; text: string; from?: "owner" | "system"; attachments?: string[] }
   | { type: "assistant"; text: string }
   | { type: "thinking"; text: string }
   | { type: "delta"; kind: "text" | "thinking"; text: string }

@@ -192,9 +192,11 @@ export class TaskRunner {
 
   // ---------- masukan ----------
 
-  send(text: string, options?: { display?: string; from?: "owner" | "system" }): void {
+  send(text: string, options?: { display?: string; from?: "owner" | "system"; attachments?: string[] }): void {
     if (this.closed) throw new Error("runner sudah ditutup");
-    this.emit({ type: "user", text: options?.display ?? text, from: options?.from ?? "owner" });
+    const attachments = options?.attachments?.length ? { attachments: options.attachments } : {};
+    // Lampiran hanya ikut di event kalau ada, supaya thread.jsonl lama dan baru berbentuk sama.
+    this.emit({ type: "user", text: options?.display ?? text, from: options?.from ?? "owner", ...attachments });
     this.inbox.push(text);
     void this.pump();
   }

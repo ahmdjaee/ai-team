@@ -145,6 +145,15 @@ export class ApiError extends Error {
   }
 }
 
+export type TaskDraft = { text: string; attachments: string[] };
+
+export function attachmentUrl(taskId: string, file: string): string {
+  return `/api/tasks/${encodeURIComponent(taskId)}/attachments/${encodeURIComponent(file)}`;
+}
+
+const IMAGE_FILE_RE = /\.(png|jpe?g|webp|gif)$/i;
+export const isImageFile = (name: string): boolean => IMAGE_FILE_RE.test(name);
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -194,10 +203,27 @@ export const api = {
   clearAsk: (id: string) => request<{ ok: true }>(`/api/tasks/${id}/ask`, { method: "DELETE" }),
   saveTaskNotes: (id: string, text: string) =>
     request<{ text: string }>(`/api/tasks/${id}/notes`, { method: "PUT", body: JSON.stringify({ text }) }),
+  taskDraft: (id: string) => request<TaskDraft>(`/api/tasks/${id}/draft`),
+  /** Satu berkas, body mentah — bukan lewat `request` karena itu selalu memasang content-type JSON. */
+  uploadAttachment: async (id: string, file: File) => {
+    const response = await fetch(`/api/tasks/${encodeURIComponent(id)}/attachments?name=${encodeURIComponent(file.name)}`, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: file,
+    });
+    if (!response.ok) {
+      const detail = (await response.json().catch(() => ({}))) as { error?: string };
+      const message = response.status === 413 ? "berkas lebih dari 25 MB" : (detail.error ?? `${response.status} ${response.statusText}`);
+      throw new ApiError(message, response.status);
+    }
+    return (await response.json()) as { file: string; size: number; image: boolean };
+  },
+  deleteAttachment: (id: string, file: string) =>
+    request<{ ok: true }>(`/api/tasks/${encodeURIComponent(id)}/attachments/${encodeURIComponent(file)}`, { method: "DELETE" }),
   createTask: (body: { title: string; description: string; role: RoleId; projectId: string; targetUrl?: string }) =>
     request<{ task: Task }>("/api/tasks", { method: "POST", body: JSON.stringify(body) }),
-  message: (id: string, text: string) =>
-    request<{ ok: true }>(`/api/tasks/${id}/message`, { method: "POST", body: JSON.stringify({ text }) }),
+  message: (id: string, text: string, attachments: string[] = []) =>
+    request<{ ok: true }>(`/api/tasks/${id}/message`, { method: "POST", body: JSON.stringify({ text, attachments }) }),
   interrupt: (id: string) => request<{ ok: true }>(`/api/tasks/${id}/interrupt`, { method: "POST" }),
   cancel: (id: string) => request<{ ok: true }>(`/api/tasks/${id}/cancel`, { method: "POST" }),
   /** `confirm` harus sama persis dengan ID tugas — server menolak kalau tidak. */

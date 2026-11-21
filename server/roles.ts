@@ -44,6 +44,10 @@ export const DENY_ALWAYS = [
   `Read(${abs(`${CONFIG.tasksDir}/**/notes.md`)})`,
   `Write(${abs(`${CONFIG.tasksDir}/**/notes.md`)})`,
   `Edit(${abs(`${CONFIG.tasksDir}/**/notes.md`)})`,
+  // Draf pesan yang belum Anda kirim juga bukan untuk bot.
+  `Read(${abs(`${CONFIG.tasksDir}/**/draft.json`)})`,
+  `Write(${abs(`${CONFIG.tasksDir}/**/draft.json`)})`,
+  `Edit(${abs(`${CONFIG.tasksDir}/**/draft.json`)})`,
 ];
 
 export const ROLES: Record<RoleId, RoleDef> = {

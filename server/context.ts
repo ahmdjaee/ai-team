@@ -293,7 +293,10 @@ function renderThread(taskId: string): string {
   const lines: string[] = [];
   for (const event of events) {
     const who = event.role ? ROLES[event.role].title : "bot";
-    if (event.type === "user") lines.push(`[${event.from === "system" ? "sistem" : "pemilik produk"}] ${oneLine(event.text, 600)}`);
+    if (event.type === "user") {
+      const files = event.attachments?.length ? ` (lampiran: ${event.attachments.join(", ")})` : "";
+      lines.push(`[${event.from === "system" ? "sistem" : "pemilik produk"}] ${oneLine(event.text, 600)}${files}`);
+    }
     else if (event.type === "assistant") lines.push(`[${who}] ${oneLine(event.text, 900)}`);
     else if (event.type === "tool") lines.push(`[${who} · tool] ${event.name} ${oneLine(JSON.stringify(event.input ?? {}), 200)}`);
     else if (event.type === "tool_result") lines.push(`[hasil tool]${event.isError ? " ERROR" : ""} ${oneLine(event.preview, 300)}`);

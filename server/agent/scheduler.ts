@@ -199,7 +199,7 @@ class Scheduler {
     });
   }
 
-  send(taskId: string, text: string, options?: { display?: string; from?: "owner" | "system" }): boolean {
+  send(taskId: string, text: string, options?: { display?: string; from?: "owner" | "system"; attachments?: string[] }): boolean {
     const task = getTask(taskId);
     if (!task) return false;
     // Tugas yang sedang jalan atau menunggu keputusan tetap di statusnya; pesannya masuk antrean runner.
