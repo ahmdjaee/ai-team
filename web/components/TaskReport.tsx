@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   api,
@@ -190,6 +190,117 @@ function ResolvedTab({ view, taskId }: { view: TaskReportView; taskId: string })
   );
 }
 
+type EvidenceView = "grid" | "list";
+const EVIDENCE_VIEW_KEY = "ai-team.evidence-view";
+
+function readEvidenceView(): EvidenceView {
+  try {
+    return localStorage.getItem(EVIDENCE_VIEW_KEY) === "list" ? "list" : "grid";
+  } catch {
+    // localStorage bisa diblokir; pakai bawaan
+    return "grid";
+  }
+}
+
+const EVIDENCE_VIEWS: Array<{ value: EvidenceView; label: string; icon: ReactNode }> = [
+  {
+    value: "grid",
+    label: "Tampilan grid",
+    icon: (
+      <>
+        <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1.25" />
+        <rect x="9" y="2.5" width="4.5" height="4.5" rx="1.25" />
+        <rect x="2.5" y="9" width="4.5" height="4.5" rx="1.25" />
+        <rect x="9" y="9" width="4.5" height="4.5" rx="1.25" />
+      </>
+    ),
+  },
+  {
+    value: "list",
+    label: "Tampilan list",
+    icon: (
+      <>
+        <path d="M6 4h8M6 8h8M6 12h8" />
+        <path d="M2.5 4h.01M2.5 8h.01M2.5 12h.01" strokeWidth="2.25" />
+      </>
+    ),
+  },
+];
+
+/** Gambar bukti tugas: grid ringkas, atau list penuh seperti gambar di dalam temuan. Pilihan diingat. */
+function Evidence({ assets, taskId }: { assets: string[]; taskId: string }) {
+  const [mode, setMode] = useState<EvidenceView>(readEvidenceView);
+  useEffect(() => {
+    try {
+      localStorage.setItem(EVIDENCE_VIEW_KEY, mode);
+    } catch {
+      // localStorage bisa diblokir; abaikan
+    }
+  }, [mode]);
+
+  const url = (asset: string): string => `/api/tasks/${encodeURIComponent(taskId)}/assets/${encodeURIComponent(asset)}`;
+  return (
+    <div className="pt-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-xs uppercase tracking-wide text-muted">Bukti ({assets.length})</h3>
+        <div role="group" aria-label="Tampilan bukti" className="flex items-center gap-0.5 rounded-lg border border-line bg-panel p-0.5">
+          {EVIDENCE_VIEWS.map(({ value, label, icon }) => (
+            <button
+              key={value}
+              type="button"
+              data-evidence-view={value}
+              aria-label={label}
+              aria-pressed={mode === value}
+              title={label}
+              onClick={() => setMode(value)}
+              className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+                mode === value ? "bg-hover text-ink" : "text-muted hover:text-ink"
+              }`}
+            >
+              <svg
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                className="h-4 w-4"
+              >
+                {icon}
+              </svg>
+            </button>
+          ))}
+        </div>
+      </div>
+      {mode === "grid" ? (
+        <div className="mt-2 grid grid-cols-2 gap-3 lg:grid-cols-3">
+          {assets.map((asset) => (
+            <a key={asset} href={url(asset)} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-line">
+              <img src={url(asset)} alt={asset} loading="lazy" className="h-32 w-full object-cover object-top" />
+              <p className="truncate px-2 py-1 font-mono text-[11px] text-muted">{asset}</p>
+            </a>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-2 space-y-4">
+          {assets.map((asset) => (
+            <a key={asset} href={url(asset)} target="_blank" rel="noreferrer" className="block">
+              <img
+                src={url(asset)}
+                alt={asset}
+                loading="lazy"
+                className="block h-auto max-w-full cursor-zoom-in rounded-lg border border-line"
+              />
+              <p className="mt-1 truncate font-mono text-[11px] text-muted">{asset}</p>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * `revision` naik saat report.md ditulis atau turn selesai (dari thread tugas). Status temuan bisa
  * diubah kurator atau retest dari tugas lain — itu datang lewat topik `project:<id>`.
@@ -338,22 +449,7 @@ export const TaskReport = memo(function TaskReport({
               label={position === 0 ? "Terbaru" : `Putaran ${index + 1}`}
             />
           ))}
-          {view.assets.length > 0 && (
-            <div className="pt-3">
-              <h3 className="text-xs uppercase tracking-wide text-muted">Bukti ({view.assets.length})</h3>
-              <div className="mt-2 grid grid-cols-2 gap-3 lg:grid-cols-3">
-                {view.assets.map((asset) => {
-                  const url = `/api/tasks/${encodeURIComponent(taskId)}/assets/${encodeURIComponent(asset)}`;
-                  return (
-                    <a key={asset} href={url} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-lg border border-line">
-                      <img src={url} alt={asset} loading="lazy" className="h-32 w-full object-cover object-top" />
-                      <p className="truncate px-2 py-1 font-mono text-[11px] text-muted">{asset}</p>
-                    </a>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+          {view.assets.length > 0 && <Evidence assets={view.assets} taskId={taskId} />}
         </div>
       )}
       {section === "findings" && <FindingsTab view={view} taskId={taskId} />}
