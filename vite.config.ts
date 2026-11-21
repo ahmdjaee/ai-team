@@ -24,6 +24,8 @@ export default defineConfig({
   root: "web",
   publicDir: "public",
   plugins: [leanLowlight(), react(), tailwind()],
+  // ai-agent-auth/react mengimpor react dari node_modules-nya sendiri kalau terpasang terisolasi: pastikan satu salinan.
+  resolve: { dedupe: ["react", "react-dom"] },
   server: {
     host: "127.0.0.1",
     port: 4321,
