@@ -20,6 +20,7 @@ mkdirSync(process.env.WORKSPACE_DIR, { recursive: true });
 
 const { CONFIG } = await import("../server/config.ts");
 const { migrateClaudeSessions } = await import("../server/accounts/claude.ts");
+const { resolveClaudeBin } = await import("ai-agent-auth/claude");
 const accounts = await import("../server/accounts/index.ts");
 const { auth, claudeEnv } = accounts;
 const store = auth.store;
@@ -44,6 +45,8 @@ function check(name: string, ok: boolean, detail?: unknown): void {
   check("F1 CLAUDE_CONFIG_DIR menunjuk folder akun app", env.CLAUDE_CONFIG_DIR === join(sandbox, "accounts", "claude"), env.CLAUDE_CONFIG_DIR);
   check("F2 API key dibuang dari env agen", env.ANTHROPIC_API_KEY === undefined && env.ANTHROPIC_AUTH_TOKEN === undefined && env.CLAUDE_CODE_OAUTH_TOKEN === undefined);
   check("F3 folder akun library = folder CONFIG", auth.paths().providers.claude === CONFIG.claudeDir && auth.paths().providers.gemini === CONFIG.antigravity.dir, auth.paths());
+  const bin = resolveClaudeBin({ env: { PATH: "" }, resolveFrom: new URL("../server/accounts/auth.ts", import.meta.url) });
+  check("F4 Claude Code bawaan SDK dipakai tanpa `claude` di PATH", Boolean(bin?.includes("@anthropic-ai/claude-agent-sdk-")), bin);
 }
 
 // ---------- 2. mesin mengikuti akun ----------

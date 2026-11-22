@@ -18,7 +18,9 @@ export const auth = createAgentAuth<ProviderId>({
   runtimeName: "ai-team",
   baseEnv: agentEnv,
   providers: [
-    claudeProvider({ dir: CONFIG.claudeDir, bin: "claude", listModels: sdkModels(query) }),
+    // Login, status, dan logout memakai program Claude Code bawaan SDK (sama dengan sesi bot), jadi
+    // `claude` tidak perlu terpasang terpisah. CLAUDE_BIN tetap bisa menimpanya.
+    claudeProvider({ dir: CONFIG.claudeDir, resolveFrom: import.meta.url, listModels: sdkModels(query) }),
     // Probe dan logout memakai peluncur yang sama dengan sesi bot: hooks.json pagar ditulis dulu.
     geminiProvider({ dir: CONFIG.antigravity.dir, bin: CONFIG.antigravity.bin, launch: launchAgyProcess }),
   ],
