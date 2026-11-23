@@ -1,17 +1,38 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { deriveActivity, formatElapsed, formatTokens, type Activity } from "../activity.ts";
 import {
+  ROLE_SHORT,
   api,
   attachmentUrl,
   isImageFile,
   type EngineId,
+  type RoleId,
+  type RoleInfo,
   type StoredEvent,
+  type Task,
   type TaskStatus,
   type UiEvent,
   type WorkerStatus,
 } from "../api.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { ApprovalCard, QuestionCard, ToolCall } from "./Cards.tsx";
+import {
+  ATTACHMENT_MAX_BYTES,
+  ComposerCard,
+  HandoffStrip,
+  ModelChip,
+  RoleChip,
+  UrlStrip,
+  MAX_ATTACHMENTS,
+  PaperclipIcon,
+  attachmentLabel,
+  attachmentName,
+  choiceLabel,
+  leadingMention,
+  roleTitle,
+  useBotChoice,
+  type ComposerAttachment,
+} from "./ChatComposer.tsx";
 import { ENGINE_SHORT } from "./EnginePicker.tsx";
 
 const ROLE_LABEL: Record<string, string> = {
@@ -39,25 +60,6 @@ function rowKey(event: StoredEvent): string {
 }
 
 type ToolResult = Extract<UiEvent, { type: "tool_result" }>;
-
-/** Nama tampilan lampiran: cap waktu yang ditambahkan server dibuang. */
-function attachmentLabel(file: string): string {
-  return file.replace(/^\d{8}-\d{6}-/, "");
-}
-
-function PaperclipIcon({ className = "h-4 w-4" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className={className}>
-      <path
-        d="M13.5 7.5 8.2 12.8a3.25 3.25 0 0 1-4.6-4.6l5.6-5.6a2.1 2.1 0 0 1 3 3L6.6 11.2a1 1 0 0 1-1.4-1.4L10.3 4.7"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
 /** Lampiran di gelembung pesan Anda: gambar sebagai pratinjau, berkas lain sebagai chip nama. */
 function MessageAttachments({ taskId, files }: { taskId: string; files: string[] }) {
@@ -95,9 +97,15 @@ function renderRow(event: StoredEvent, resolved: Set<string>, results: Map<strin
   switch (event.type) {
     case "user":
       if (event.from === "system") {
+        // Operan dari chat utama bisa membawa lampiran.
         return (
           <div key={key}>
             <div className="rounded-lg border border-line bg-panel px-3 py-2 text-xs text-muted">{event.text}</div>
+            {event.attachments && event.attachments.length > 0 && (
+              <div className="flex justify-end">
+                <MessageAttachments taskId={taskId} files={event.attachments} />
+              </div>
+            )}
           </div>
         );
       }
@@ -220,23 +228,64 @@ function ActivityBar({ activity }: { activity?: Activity }) {
   );
 }
 
-/** Tinggi maksimum kotak ketik (±8 baris); setelah itu isinya yang di-scroll. */
-const INPUT_MAX_HEIGHT = 176;
 /** Jeda simpan-otomatis draf setelah Anda berhenti mengetik. */
 const DRAFT_SAVE_DELAY_MS = 600;
 /** Batas body `fetch(..., { keepalive })` di browser 64 KiB; di atas itu fetch-nya langsung gagal. */
 const KEEPALIVE_MAX_BYTES = 60_000;
-/** Sama dengan batas server (`ATTACHMENTS_PER_MESSAGE`, `ATTACHMENT_MAX_BYTES`). */
-const MAX_ATTACHMENTS = 10;
-const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 
 type Upload = { key: string; name: string; error?: string };
 
 const serializeDraft = (text: string, attachments: string[]): string => JSON.stringify({ text, attachments });
 const EMPTY_DRAFT = serializeDraft("", []);
 
+/**
+ * Usul agen untuk mengoper tugas, satu baris yang bisa dibentang, tepat di atas kotak chat. "Oper"
+ * mengisi kotak chat dengan bot dan catatan usulnya; Anda yang menekan Kirim.
+ */
+function SuggestionBar({ suggestion, onUse }: { suggestion: NonNullable<Task["suggestedNext"]>; onUse: () => void }) {
+  // Usul agen dibiarkan tertutup: catatannya sering panjang.
+  const [open, setOpen] = useState(false);
+  // Usul yang baru ditulis agen tidak boleh muncul dalam keadaan terbentang.
+  useEffect(() => setOpen(false), [suggestion.at]);
+  return (
+    <div data-suggestion className="mb-2 rounded-lg border border-line bg-tag-orange px-3 py-1.5 text-xs text-tag-orange-ink">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+          title={open ? "Tutup usul agen" : "Baca usul agen selengkapnya"}
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded text-left hover:opacity-80"
+        >
+          <span aria-hidden className="shrink-0">
+            {open ? "▾" : "▸"}
+          </span>
+          <span className="truncate">
+            Usul agen: lanjutkan ke <strong>{ROLE_SHORT[suggestion.role]}</strong>
+            {open ? null : ` — ${suggestion.note}`}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={onUse}
+          title="Isi kotak chat dengan bot dan catatan usul ini, lalu tekan Oper untuk mengoper"
+          className="shrink-0 rounded-md border border-line-strong px-2.5 py-0.5 font-semibold hover:bg-hover"
+        >
+          Terapkan di chat
+        </button>
+      </div>
+      {/* Dibatasi tingginya: catatan agen bisa ribuan karakter. */}
+      {open && <p className="mt-1.5 max-h-56 overflow-y-auto break-words whitespace-pre-wrap">{suggestion.note}</p>}
+    </div>
+  );
+}
+
 export function TaskThread({
   taskId,
+  task,
+  roles,
+  defaultTargetUrl = "",
+  onChanged,
   events,
   status,
   taskStatus,
@@ -249,6 +298,13 @@ export function TaskThread({
   canSend,
 }: {
   taskId: string;
+  /** Tugas yang dibuka: penugasan terakhirnya jadi pilihan bot bawaan di kotak chat. */
+  task: Task;
+  roles: RoleInfo[];
+  /** URL uji bawaan (project, lalu `.env`) kalau tugasnya belum punya. */
+  defaultTargetUrl?: string;
+  /** Dipanggil setelah tugas dioper dari kotak chat. */
+  onChanged?: () => void;
   events: StoredEvent[];
   status: WorkerStatus;
   taskStatus?: TaskStatus;
@@ -265,6 +321,19 @@ export function TaskThread({
   const bottom = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+
+  // Pilihan bot di kotak chat. Bawaannya penugasan yang berjalan; berbeda dari itu = kirim berarti oper.
+  const current = task.assignments.at(-1);
+  const baseline = { role: task.role, engine: current?.engine ?? "claude", model: current?.model } satisfies {
+    role: RoleId;
+    engine: EngineId;
+    model?: string;
+  };
+  const choiceKey = `${taskId}:${task.assignments.length}`;
+  const choice = useBotChoice(baseline, choiceKey);
+  const [targetUrl, setTargetUrl] = useState(task.targetUrl ?? defaultTargetUrl);
+  useEffect(() => setTargetUrl(task.targetUrl ?? defaultTargetUrl), [choiceKey]);
+  const usesBrowser = roles.find((item) => item.id === choice.role)?.usesBrowser ?? false;
   // Boleh ikut turun atau tidak — di ref supaya efek di bawah tidak membaca nilai basi.
   const stick = useRef(true);
   const instant = useRef(true);
@@ -333,8 +402,6 @@ export function TaskThread({
   // yang sudah diterima server.
   const [files, setFiles] = useState<string[]>([]);
   const [uploads, setUploads] = useState<Upload[]>([]);
-  const [dragging, setDragging] = useState(false);
-  const picker = useRef<HTMLInputElement>(null);
   const draft = useRef<{ taskId: string; saved: string; text: string; files: string[] }>({
     taskId,
     saved: EMPTY_DRAFT,
@@ -421,15 +488,13 @@ export function TaskThread({
   };
 
   /** Tiap berkas langsung diunggah; chip "mengunggah…" berganti jadi lampiran setelah server menyimpannya. */
-  const addFiles = (list: FileList | File[]) => {
+  const addFiles = (incoming: File[]) => {
     const id = taskId;
-    const incoming = [...list];
     const room = MAX_ATTACHMENTS - draft.current.files.length - uploads.filter((item) => !item.error).length;
     if (incoming.length > room) alert(`Maksimal ${MAX_ATTACHMENTS} lampiran per pesan.`);
     for (const file of incoming.slice(0, Math.max(0, room))) {
       const key = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      // Screenshot dari clipboard selalu bernama "image.png": beri nama yang bisa dibedakan.
-      const name = file.name && file.name !== "image.png" ? file.name : `tempel-${new Date().toLocaleTimeString("sv-SE").replace(/:/g, "")}.png`;
+      const name = attachmentName(file);
       if (file.size > ATTACHMENT_MAX_BYTES) {
         setUploads((current) => [...current, { key, name, error: "lebih dari 25 MB" }]);
         continue;
@@ -455,15 +520,6 @@ export function TaskThread({
     void api.deleteAttachment(taskId, file).catch(() => undefined);
   };
 
-  const hasFiles = (event: React.DragEvent) => event.dataTransfer.types.includes("Files");
-
-  useLayoutEffect(() => {
-    const el = input.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, INPUT_MAX_HEIGHT)}px`;
-    el.style.overflowY = el.scrollHeight > INPUT_MAX_HEIGHT ? "auto" : "hidden";
-  }, [text]);
 
   // Kotak ketik dan bar aktivitas mengubah tinggi area pesan; pesan terakhir jangan sampai tertutup.
   useEffect(() => {
@@ -533,26 +589,62 @@ export function TaskThread({
   }, [activityLabel]);
 
   const uploading = uploads.some((item) => !item.error);
-  const canSubmit = canSend && !sending && !uploading && (text.trim() !== "" || files.length > 0);
+  // Oper boleh tanpa catatan: bot baru tetap menerima instruksi asli dan ringkasan serah terima.
+  const canSubmit =
+    canSend && !sending && !uploading && (choice.handoff ? choice.engineReady : text.trim() !== "" || files.length > 0);
+
+  /** Usul agen → kotak chat: bot usulan dipilih dan catatannya siap disunting. */
+  const applySuggestion = (role: RoleId, note: string) => {
+    choice.setRole(role);
+    const now = draft.current.text;
+    if (!now.includes(note)) onType(now.trim() ? `${now.trimEnd()}\n\n${note}` : note);
+    requestAnimationFrame(() => {
+      const el = input.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  };
 
   const send = async () => {
-    const value = text.trim();
-    const sent = draft.current.files;
     if (!canSubmit) return;
+    let value = text.trim();
+    const sent = draft.current.files;
+    // `@qa …` yang ditempel penuh: bot dipilih dulu, Anda yang menekan Kirim lagi.
+    const lead = leadingMention(roles, value);
+    if (lead && lead.role !== choice.role) {
+      choice.setRole(lead.role);
+      onType(lead.text);
+      return;
+    }
+    if (lead) value = lead.text.trim();
     setSending(true);
     try {
       // Simpanan draf yang masih di jalan tidak boleh mendarat setelah server membersihkannya.
       clearTimeout(saveTimer.current);
       await inFlight.current;
-      await api.message(taskId, value, sent);
+      if (choice.handoff) {
+        await api.handoff(taskId, {
+          role: choice.role,
+          note: value || undefined,
+          engine: choice.engine,
+          model: choice.model,
+          targetUrl: usesBrowser ? targetUrl.trim() || undefined : undefined,
+          attachments: sent,
+        });
+      } else {
+        const url = usesBrowser && targetUrl.trim() !== (task.targetUrl ?? "") ? targetUrl.trim() || undefined : undefined;
+        await api.message(taskId, value, sent, url);
+      }
       // Server sudah menghapus draf; yang sempat diketik/dilampirkan selama pengiriman tidak ikut terhapus.
-      const rest = draft.current.text.trim() === value ? "" : draft.current.text;
+      const rest = draft.current.text.trim() === text.trim() ? "" : draft.current.text;
       const restFiles = draft.current.files.filter((file) => !sent.includes(file));
       draft.current = { taskId, saved: EMPTY_DRAFT, text: rest, files: restFiles };
       setText(rest);
       setFiles(restFiles);
       setUploads((current) => current.filter((item) => !item.error));
       if (rest || restFiles.length > 0) flushDraft();
+      if (choice.handoff) onChanged?.();
       // Pesan Anda sendiri wajib terlihat.
       jumpToBottom();
     } catch (cause) {
@@ -561,6 +653,24 @@ export function TaskThread({
       setSending(false);
     }
   };
+
+  const attachments: ComposerAttachment[] = [
+    ...files.map((file) => ({
+      key: file,
+      name: attachmentLabel(file),
+      image: isImageFile(file),
+      preview: isImageFile(file) ? attachmentUrl(taskId, file) : undefined,
+      state: "ready" as const,
+    })),
+    ...uploads.map((item) => ({
+      key: item.key,
+      name: item.name,
+      image: false,
+      state: item.error ? ("error" as const) : ("pending" as const),
+      error: item.error,
+    })),
+  ];
+  const handoffTo = choiceLabel(roles, choice);
 
   return (
     <div className="flex h-full flex-col">
@@ -600,145 +710,62 @@ export function TaskThread({
       </div>
 
       <div className="px-4 pb-4 pt-2">
-        <div
-          data-composer
-          onDragOver={(e) => {
-            if (!canSend || !hasFiles(e)) return;
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={(e) => {
-            // Pindah ke elemen anak juga memicu dragleave; hanya keluar sungguhan yang dihitung.
-            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
-          }}
-          onDrop={(e) => {
-            if (!canSend || !hasFiles(e)) return;
-            e.preventDefault();
-            setDragging(false);
-            addFiles(e.dataTransfer.files);
-          }}
-          className={`rounded-2xl border bg-raised transition-colors focus-within:border-accent ${
-            dragging ? "border-accent ring-2 ring-accent/30" : "border-line"
-          } ${canSend ? "" : "opacity-60"}`}
-        >
-          {(files.length > 0 || uploads.length > 0) && (
-            <div className="flex flex-wrap gap-2 px-3 pt-3" aria-label="Lampiran">
-              {files.map((file) => (
-                <span
-                  key={file}
-                  data-attachment-chip={file}
-                  className="group relative flex items-center gap-2 rounded-lg border border-line bg-panel py-1 pl-1 pr-7 text-xs text-ink"
-                >
-                  {isImageFile(file) ? (
-                    <img src={attachmentUrl(taskId, file)} alt="" className="h-10 w-10 rounded object-cover" />
-                  ) : (
-                    <span className="flex h-10 w-10 items-center justify-center rounded bg-hover text-muted">
-                      <PaperclipIcon />
-                    </span>
-                  )}
-                  <span className="max-w-[160px] truncate">{attachmentLabel(file)}</span>
-                  <button
-                    type="button"
-                    onClick={() => removeFile(file)}
-                    aria-label={`Hapus lampiran ${attachmentLabel(file)}`}
-                    title="Hapus lampiran"
-                    className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full text-muted hover:bg-hover hover:text-ink"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-              {uploads.map((item) => (
-                <span
-                  key={item.key}
-                  data-attachment-upload={item.error ? "error" : "pending"}
-                  className={`relative flex items-center gap-2 rounded-lg border py-1 pl-2 pr-7 text-xs ${
-                    item.error ? "border-line bg-tag-red text-tag-red-ink" : "border-line bg-panel text-muted"
-                  }`}
-                >
-                  <span className="max-w-[160px] truncate">{item.name}</span>
-                  <span>{item.error ? `gagal: ${item.error}` : "mengunggah…"}</span>
-                  {item.error && (
-                    <button
-                      type="button"
-                      onClick={() => setUploads((current) => current.filter((other) => other.key !== item.key))}
-                      aria-label="Tutup"
-                      className="absolute right-1 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full hover:bg-hover"
-                    >
-                      ×
-                    </button>
-                  )}
-                </span>
-              ))}
-            </div>
-          )}
-          <textarea
-            ref={input}
-            value={text}
-            onChange={(e) => onType(e.target.value)}
-            onKeyDown={(e) => {
-              // Enter saat IME masih merangkai kata hanya memilih kata, bukan mengirim.
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            onPaste={(e) => {
-              // Screenshot atau berkas dari clipboard jadi lampiran; teks biasa ditempel seperti biasa.
-              if (e.clipboardData.files.length === 0) return;
-              e.preventDefault();
-              addFiles(e.clipboardData.files);
-            }}
-            rows={1}
-            disabled={!canSend}
-            aria-label="Arahan untuk agen"
-            placeholder={canSend ? "Arahan tambahan untuk tugas ini…" : "Tugas sudah ditutup — buka lagi lewat review."}
-            className="block w-full resize-none bg-transparent px-4 pb-1 pt-3 text-sm text-ink outline-none placeholder:text-faint"
+        {task.suggestedNext && (
+          <SuggestionBar
+            suggestion={task.suggestedNext}
+            onUse={() => applySuggestion(task.suggestedNext!.role, task.suggestedNext!.note)}
           />
-          <div className="flex items-center justify-between gap-2 px-3 pb-2.5">
-            <input
-              ref={picker}
-              type="file"
-              multiple
-              hidden
-              onChange={(e) => {
-                if (e.target.files) addFiles(e.target.files);
-                // Memilih berkas yang sama lagi tetap memicu onChange.
-                e.target.value = "";
-              }}
-            />
-            <button
-              type="button"
-              onClick={() => picker.current?.click()}
-              disabled={!canSend}
-              aria-label="Lampirkan berkas"
-              title="Lampirkan berkas (atau tempel / seret ke sini)"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:bg-hover hover:text-ink disabled:text-faint disabled:hover:bg-transparent"
-            >
-              <PaperclipIcon />
-            </button>
-            <span className="hidden min-w-0 flex-1 truncate text-[11px] text-faint sm:block">
-              {canSend ? "Enter kirim · Shift+Enter baris baru · tempel atau seret berkas untuk melampirkan" : ""}
-            </span>
-            <button
-              onClick={() => void send()}
-              disabled={!canSubmit}
-              aria-label="Kirim"
-              title={uploading ? "Tunggu lampiran selesai diunggah" : "Kirim"}
-              className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition-colors hover:bg-accent-hover disabled:bg-hover disabled:text-faint"
-            >
-              <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="h-4 w-4">
-                <path
-                  d="M8 13V3M3.5 7.5 8 3l4.5 4.5"
-                  stroke="currentColor"
-                  strokeWidth="1.75"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-          </div>
-        </div>
+        )}
+        <ComposerCard
+          roles={roles}
+          onMention={choice.setRole}
+          text={text}
+          onText={onType}
+          attachments={attachments}
+          onAddFiles={addFiles}
+          onRemoveAttachment={(key) =>
+            files.includes(key) ? removeFile(key) : setUploads((current) => current.filter((item) => item.key !== key))
+          }
+          inputRef={input}
+          strips={
+            choice.handoff || usesBrowser ? (
+              <>
+                {choice.handoff && (
+                  <HandoffStrip
+                    target={`${roleTitle(roles, choice.role)}${choice.role === task.role ? " dengan mesin/model baru" : ""}`}
+                    from={roleTitle(roles, task.role)}
+                    onCancel={choice.reset}
+                  />
+                )}
+                {usesBrowser && <UrlStrip value={targetUrl} onChange={setTargetUrl} disabled={!canSend} />}
+              </>
+            ) : undefined
+          }
+          toolbarLeft={<RoleChip roles={roles} choice={choice} disabled={!canSend} highlight={choice.handoff} />}
+          toolbarRight={<ModelChip roles={roles} choice={choice} disabled={!canSend} />}
+          canSend={canSend}
+          canSubmit={canSubmit}
+          onSend={() => void send()}
+          placeholder={
+            !canSend
+              ? "Tugas sudah ditutup — buka lagi lewat review."
+              : choice.handoff
+                ? `Catatan untuk ${roleTitle(roles, choice.role)} (opsional)…`
+                : `Arahan tambahan untuk ${roleTitle(roles, task.role)}…`
+          }
+          sendLabel={choice.handoff ? `Oper ke ${handoffTo}` : "Kirim"}
+          sendText={choice.handoff ? "Oper" : undefined}
+          sendTitle={uploading ? "Tunggu lampiran selesai diunggah" : !choice.engineReady && choice.handoff ? "Mesin ini belum punya akun yang siap — lihat Pengaturan → Akun AI" : undefined}
+          hint={
+            !canSend
+              ? "Tugas sudah ditutup — buka lagi lewat review."
+              : choice.switched && choice.settings
+                ? `Mesin bawaan bot ini (${ENGINE_SHORT[choice.settings.engines[choice.role]]}) belum punya akun, jadi operan ini memakai ${ENGINE_SHORT[choice.engine]}.`
+                : choice.handoff
+                ? `Enter oper · pilih ${roleTitle(roles, task.role)} lagi untuk batal oper · @ sebut bot`
+                : "Enter kirim · Shift+Enter baris baru · @ sebut bot lain untuk mengoper"
+          }
+        />
       </div>
     </div>
   );

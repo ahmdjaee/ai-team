@@ -1,9 +1,10 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type AskDefaults, type AskMessage, type EngineId } from "../api.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { subscribe } from "../realtime.ts";
-import { ENGINE_SHORT, EnginePicker, modelName, usableEngine, useEngines } from "./EnginePicker.tsx";
+import { EngineModelChip } from "./ChatComposer.tsx";
+import { ENGINE_SHORT, modelName, usableEngine, useEngines } from "./EnginePicker.tsx";
 
 type AskSnapshot = { messages: AskMessage[]; busy: boolean; costUsd: number; defaults: AskDefaults };
 /**
@@ -16,6 +17,16 @@ type AskStreamEvent =
   | { type: "answer"; message: AskMessage }
   | { type: "busy"; busy: boolean }
   | { type: "error"; message: string };
+
+/** Contoh pertanyaan di panel yang masih kosong; diklik = mengisi kotak tanya. */
+const STARTERS = [
+  "Ringkas temuan terpenting tugas ini",
+  "Kenapa bot memilih langkah terakhirnya?",
+  "Apa yang belum diuji atau dikerjakan?",
+];
+
+/** Tinggi maksimum kotak tanya; setelah itu isinya yang di-scroll. */
+const ASK_INPUT_MAX = 160;
 
 /** Token jawaban ditampung dan dikeluarkan maksimal 10× per detik, bukan per token. */
 const STREAM_FLUSH_MS = 100;
@@ -193,6 +204,15 @@ export const AskPanel = memo(function AskPanel({ taskId, onClose }: { taskId: st
     setChoice(lastChoice);
   };
 
+  const input = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = input.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, ASK_INPUT_MAX)}px`;
+    el.style.overflowY = el.scrollHeight > ASK_INPUT_MAX ? "auto" : "hidden";
+  }, [text]);
+
   const send = async () => {
     const value = text.trim();
     if (!value || busy || noEngine) return;
@@ -267,10 +287,28 @@ export const AskPanel = memo(function AskPanel({ taskId, onClose }: { taskId: st
 
       <div ref={viewport} onScroll={onScroll} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
         {messages.length === 0 && !streaming && (
-          <p className="text-xs text-faint">
-            Tanya apa saja soal tugas ini — temuan mana yang penting, kenapa bot memilih suatu langkah, atau minta
-            ringkasan laporannya. Ia boleh membaca berkas tugas dan workspace, tapi tidak bisa mengubah apa pun.
-          </p>
+          <div data-ask-empty className="pt-2">
+            <p className="text-xs leading-relaxed text-muted">
+              Tanya apa saja soal tugas ini. Ia boleh membaca berkas tugas dan workspace, tapi tidak bisa mengubah apa pun.
+            </p>
+            {!noEngine && (
+              <div className="mt-3 flex flex-col items-start gap-1.5">
+                {STARTERS.map((starter) => (
+                  <button
+                    key={starter}
+                    type="button"
+                    onClick={() => {
+                      setText(starter);
+                      input.current?.focus();
+                    }}
+                    className="rounded-full border border-line px-3 py-1 text-left text-xs text-muted transition-colors hover:border-line-strong hover:bg-hover hover:text-ink"
+                  >
+                    {starter}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {messages.map((message, index) =>
           message.role === "user" ? (
@@ -292,56 +330,71 @@ export const AskPanel = memo(function AskPanel({ taskId, onClose }: { taskId: st
         <div ref={bottom} />
       </div>
 
-      <div className="border-t border-line p-3">
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-          rows={2}
-          disabled={noEngine}
-          placeholder={noEngine ? "Belum ada akun AI untuk menjawab" : "Tanya soal tugas ini… (Enter kirim)"}
-          className="w-full resize-none rounded-xl border border-line bg-page px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
-        />
-        {noEngine && (
-          <p className="mt-1 text-[11px] text-tag-yellow-ink">
-            Tanya butuh akun Claude atau Gemini —{" "}
-            <Link to="/settings" className="underline hover:text-ink">
-              tambahkan di Pengaturan → Akun AI
-            </Link>
-            .
-          </p>
-        )}
-        <div className="mt-2 flex items-end gap-2">
-          {!noEngine && (
-            <div className="min-w-0 flex-1" title="Mesin dan model untuk pertanyaan berikutnya">
-              <EnginePicker
-                size="sm"
-                engines={engines}
-                engine={engine}
-                model={model}
-                defaultModel={defaults?.models[engine]}
-                defaultLabel="Bawaan Tanya"
-                onChange={pick}
-              />
-            </div>
+      <div className="px-3 pb-3 pt-2">
+        <div
+          data-ask-composer
+          className={`rounded-2xl border border-line bg-raised shadow-lg shadow-black/10 transition-colors focus-within:border-line-strong ${
+            noEngine ? "opacity-80" : ""
+          }`}
+        >
+          {noEngine && (
+            <p className="rounded-t-2xl border-b border-line bg-tag-yellow px-3.5 py-2 text-[11px] text-tag-yellow-ink">
+              Tanya butuh akun Claude atau Gemini —{" "}
+              <Link to="/settings" className="underline hover:text-ink">
+                tambahkan di Pengaturan → Akun AI
+              </Link>
+              .
+            </p>
           )}
-          <button
-            onClick={() => void send()}
-            disabled={busy || noEngine || !text.trim()}
-            className="ml-auto shrink-0 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover disabled:opacity-40"
-          >
-            Kirim
-          </button>
+          <textarea
+            ref={input}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter saat IME masih merangkai kata hanya memilih kata, bukan mengirim.
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                void send();
+              }
+            }}
+            rows={1}
+            disabled={noEngine}
+            aria-label="Pertanyaan untuk panel Tanya"
+            placeholder={noEngine ? "Belum ada akun AI untuk menjawab" : "Tanya soal tugas ini…"}
+            className="block min-h-[48px] w-full resize-none bg-transparent px-3.5 pb-1 pt-3 text-sm leading-relaxed text-ink outline-none placeholder:text-faint"
+          />
+          <div className="flex items-center justify-between gap-2 px-2 pb-2">
+            <div className="min-w-0">
+              {!noEngine && (
+                <EngineModelChip
+                  engines={engines}
+                  engine={engine}
+                  model={model}
+                  defaultModel={(id, info) => defaults?.models[id] ?? info?.defaultModel}
+                  defaultLabel="Bawaan Tanya"
+                  align="start"
+                  onChange={pick}
+                />
+              )}
+            </div>
+            <button
+              onClick={() => void send()}
+              disabled={busy || noEngine || !text.trim()}
+              aria-label="Kirim pertanyaan"
+              title={busy ? "Tunggu jawaban sebelumnya selesai" : "Kirim (Enter)"}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-on-accent transition-colors hover:bg-accent-hover disabled:bg-hover disabled:text-faint"
+            >
+              <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="h-4 w-4">
+                <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
         </div>
-        <div className="mt-2 flex items-center gap-2 text-[11px] text-faint">
-          {cost > 0 && <span>tanya: ${cost.toFixed(4)}</span>}
+        <div className="mt-1.5 flex items-center gap-2 px-1 text-[11px] text-faint">
+          <span className="truncate">Enter kirim · Shift+Enter baris baru</span>
+          {cost > 0 && <span className="shrink-0">· ${cost.toFixed(4)}</span>}
           {messages.length > 0 && (
-            <button onClick={() => void clear()} className="ml-auto hover:text-tag-red-ink">
+            <button onClick={() => void clear()} className="ml-auto shrink-0 hover:text-tag-red-ink">
               Hapus percakapan
             </button>
           )}

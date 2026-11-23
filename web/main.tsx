@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { App } from "./App.tsx";
-import { MemoryRoute, ProjectRoute, SettingsRoute, TaskRoute, TasksIndex } from "./routes.tsx";
+import { MemoryRoute, NewTaskRoute, ProjectRoute, SettingsRoute, TaskRoute, TasksIndex } from "./routes.tsx";
 import "./styles.css";
 import { applyTheme, readTheme } from "./theme.ts";
 
@@ -19,6 +19,7 @@ createRoot(container).render(
         {/* App adalah kerangka (sidebar + Outlet); isi kanannya ditentukan alamat. */}
         <Route element={<App />}>
           <Route index element={<TasksIndex />} />
+          <Route path="tasks/new" element={<NewTaskRoute />} />
           <Route path="tasks/:id" element={<TaskRoute />} />
           <Route path="tasks/:id/:tab" element={<TaskRoute />} />
           <Route path="projects/:projectId" element={<ProjectRoute />} />

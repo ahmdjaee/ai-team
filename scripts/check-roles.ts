@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { CONFIG } from "../server/config.ts";
 import { ANTIGRAVITY_CODE_DIR, PERSONAL_GEMINI_DIR } from "../server/protected.ts";
 import { findingHeads, reportRounds, verdictOf } from "../server/recap.ts";
-import { DENY_ALWAYS, ROLES, permissionsFor, resolvePermissionMode } from "../server/roles.ts";
+import { ARTIFACT_TOOLS, DENY_ALWAYS, ROLES, permissionsFor, resolvePermissionMode } from "../server/roles.ts";
+import { titleOptions } from "../server/agent/titler.ts";
 import { findingStatusTools } from "../server/team/mcp.ts";
 import type { RoleId } from "../server/types.ts";
 
@@ -53,6 +54,14 @@ for (const role of ["qa", "engineer", "devops", "uiux"] as RoleId[]) {
     deny.includes(`Read(/${CONFIG.dataDir}/accounts.json)`);
   expect(`${role}: akun AI milik app diblokir`, accounts, true);
 }
+// Sesi pemberi judul otomatis juga sesi Claude milik app: aturan Artifact di CLAUDE.md berlaku.
+const titleSession = titleOptions(new AbortController());
+const titleDeny = (titleSession.settings as { permissions?: { deny?: string[] } } | undefined)?.permissions?.deny ?? [];
+expect("judul otomatis: Artifact disembunyikan", ARTIFACT_TOOLS.every((tool) => titleSession.disallowedTools?.includes(tool)), true);
+expect("judul otomatis: DENY_ALWAYS dipasang", DENY_ALWAYS.every((tool) => titleDeny.includes(tool)), true);
+expect("judul otomatis: tanpa tool", titleSession.tools, []);
+expect("judul otomatis: tanpa transcript", titleSession.persistSession, false);
+
 expect("mode ask memakai acceptEdits untuk report.md", resolvePermissionMode(uiux, "ask"), "acceptEdits");
 expect("mode readonly memakai plan", resolvePermissionMode(uiux, "readonly"), "plan");
 

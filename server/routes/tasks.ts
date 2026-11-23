@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import express, { Router } from "express";
 import { curator } from "../agent/curator.ts";
 import { resolveEngine, scheduler } from "../agent/scheduler.ts";
+import { titler } from "../agent/titler.ts";
 import { ENGINE_LABEL, engineUsable } from "../engines/index.ts";
 import { BOUNDARY, live } from "../browser/live.ts";
 import { CONFIG } from "../config.ts";
@@ -22,6 +23,7 @@ import {
   composeAttachmentMessage,
   createTask,
   deleteAttachment,
+  fallbackTitle,
   resolveAttachment,
   saveAttachment,
   getTask,
@@ -89,14 +91,41 @@ function engineChoice(body: unknown): { engine?: EngineId; model?: string; error
   return { engine: isEngineId(raw.engine) ? raw.engine : undefined, model };
 }
 
+/**
+ * Lampiran yang dikirim bersama pesan (`/message`, `/start`, `/handoff`): semuanya harus sudah
+ * diunggah ke tugas ini. `error` berisi alasan penolakan.
+ */
+function attachmentsOf(taskId: string, body: unknown): { attachments: string[]; error?: string } {
+  const raw: unknown[] = Array.isArray((body as { attachments?: unknown })?.attachments)
+    ? (body as { attachments: unknown[] }).attachments
+    : [];
+  if (raw.length > ATTACHMENTS_PER_MESSAGE) return { attachments: [], error: `maksimal ${ATTACHMENTS_PER_MESSAGE} lampiran per pesan` };
+  const attachments = raw.filter((file): file is string => typeof file === "string");
+  if (attachments.length !== raw.length || attachments.some((file) => !resolveAttachment(taskId, file))) {
+    return { attachments: [], error: "lampiran tidak ditemukan — unggah ulang" };
+  }
+  return { attachments };
+}
+
+/**
+ * Tugas baru dari chat utama: pesan pertama jadi instruksinya. Tanpa `title`, judul sementara diambil
+ * dari pesan itu dan judul otomatis menyusul. `hold: true` menahan pesan pembuka sampai lampiran
+ * pesan pertama terunggah dan `POST /tasks/:id/start` dipanggil.
+ */
 tasksRouter.post("/tasks", (req, res) => {
-  const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
   const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
+  const given = typeof req.body?.title === "string" ? req.body.title.trim() : "";
   const role = typeof req.body?.role === "string" ? req.body.role : "";
-  if (!title || !isRoleId(role)) {
-    res.status(400).json({ error: "judul dan bot wajib diisi" });
+  if (!isRoleId(role)) {
+    res.status(400).json({ error: "bot wajib dipilih" });
     return;
   }
+  if (!description && !given) {
+    res.status(400).json({ error: "tulis dulu apa yang harus dikerjakan" });
+    return;
+  }
+  const title = given || fallbackTitle(description);
+  const hold = req.body?.hold === true;
   const requested = typeof req.body?.projectId === "string" ? req.body.projectId : "";
   const project = getProject(requested) ?? getProject(defaultProjectId());
   if (!project) {
@@ -122,9 +151,39 @@ tasksRouter.post("/tasks", (req, res) => {
     return;
   }
 
-  const task = createTask({ title, description: description || title, role, projectId: project.id, targetUrl, engine, model });
-  scheduler.start(task);
+  const task = createTask({
+    title,
+    description: description || title,
+    role,
+    projectId: project.id,
+    targetUrl,
+    engine,
+    model,
+    pendingStart: hold,
+  });
+  if (!hold) scheduler.start(task);
+  if (!given) void titler.suggest(task.id, title);
   res.json({ task });
+});
+
+/** Jalankan tugas yang dibuat dengan `hold`, dengan lampiran pesan pertamanya. Panggilan kedua tidak berbuat apa-apa. */
+tasksRouter.post("/tasks/:id/start", (req, res) => {
+  const task = getTask(req.params.id);
+  if (!task) {
+    res.status(404).json({ error: "tugas tidak ditemukan" });
+    return;
+  }
+  if (!task.pendingStart) {
+    res.json({ ok: true, task });
+    return;
+  }
+  const { attachments, error } = attachmentsOf(task.id, req.body);
+  if (error) {
+    res.status(400).json({ error });
+    return;
+  }
+  scheduler.start(task, attachments);
+  res.json({ ok: true, task: getTask(task.id) });
 });
 
 const EVENTS_MAX = 2000;
@@ -335,17 +394,13 @@ tasksRouter.delete("/tasks/:id/attachments/:file", (req, res) => {
 
 tasksRouter.post("/tasks/:id/message", (req, res) => {
   const text = typeof req.body?.text === "string" ? req.body.text.trim() : "";
-  const raw: unknown[] = Array.isArray(req.body?.attachments) ? req.body.attachments : [];
-  if (raw.length > ATTACHMENTS_PER_MESSAGE) {
-    res.status(400).json({ error: `maksimal ${ATTACHMENTS_PER_MESSAGE} lampiran per pesan` });
+  const { attachments, error } = attachmentsOf(req.params.id, req.body);
+  if (error) {
+    res.status(400).json({ error });
     return;
   }
-  const attachments = raw.filter((file): file is string => typeof file === "string");
-  if (attachments.length !== raw.length || attachments.some((file) => !resolveAttachment(req.params.id, file))) {
-    res.status(400).json({ error: "lampiran tidak ditemukan — unggah ulang" });
-    return;
-  }
-  if (!text && attachments.length === 0) {
+  const hasUrl = typeof req.body?.targetUrl === "string" && req.body.targetUrl.trim() !== "";
+  if (!text && attachments.length === 0 && !hasUrl) {
     res.status(400).json({ error: "text wajib diisi" });
     return;
   }
@@ -360,7 +415,12 @@ tasksRouter.post("/tasks/:id/message", (req, res) => {
     res.status(409).json({ error: `Pesan belum bisa dikirim: ${blocked}` });
     return;
   }
-  scheduler.send(task.id, composeAttachmentMessage(task.id, text, attachments), { display: text, attachments });
+  // URL uji diganti dari kotak chat: disimpan di tugas dan disebut di pesan untuk bot.
+  const targetUrl = typeof req.body?.targetUrl === "string" ? req.body.targetUrl.trim() : "";
+  const urlChanged = Boolean(targetUrl) && targetUrl !== task.targetUrl && ROLES[task.role].usesBrowser;
+  if (urlChanged) updateTask(task.id, { targetUrl });
+  const body = urlChanged ? `URL yang diuji sekarang: ${targetUrl}${text ? `\n\n${text}` : ""}` : text;
+  scheduler.send(task.id, composeAttachmentMessage(task.id, body, attachments), { display: body, attachments });
   // Sudah terkirim: draf dibersihkan di sini, jadi simpan-otomatis yang telat tidak menghidupkannya lagi di browser lain.
   writeDraft(task.id, {});
   res.json({ ok: true });
@@ -417,7 +477,17 @@ tasksRouter.post("/tasks/:id/handoff", async (req, res) => {
     res.status(409).json({ error: `${ENGINE_LABEL[resolved.engine]} belum bisa dipakai: ${usable.reason}` });
     return;
   }
-  const task = await scheduler.handoff(req.params.id, role, note, resolved);
+  const { attachments, error } = attachmentsOf(req.params.id, req.body);
+  if (error) {
+    res.status(400).json({ error });
+    return;
+  }
+  // Oper dari chat utama ke bot yang memakai browser membawa URL yang diuji dari kotak chat.
+  const targetUrl = typeof req.body?.targetUrl === "string" ? req.body.targetUrl.trim() : "";
+  if (targetUrl && getTask(req.params.id)) updateTask(req.params.id, { targetUrl });
+  const task = await scheduler.handoff(req.params.id, role, note || undefined, resolved, attachments);
+  // Draf kotak chat sudah terkirim sebagai catatan operan.
+  if (task) writeDraft(task.id, {});
   if (!task) {
     res.status(404).json({ error: "tugas tidak ditemukan" });
     return;
