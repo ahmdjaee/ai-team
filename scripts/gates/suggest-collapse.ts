@@ -1,6 +1,6 @@
 /**
- * Gate: kotak "Usul agen" di halaman tugas harus setinggi SATU BARIS,
- * bisa dibentang saat diklik, dan tidak pernah lagi merebut layar.
+ * Gate: kotak "Usul agen" di atas kotak chat harus setinggi SATU BARIS,
+ * bisa dibentang saat diklik, tidak pernah merebut layar, dan "Oper" mengisi kotak chat.
  *
  * Jalankan dengan server yang sedang hidup:  bun run gate:suggest
  * (Tidak memanggil agen sama sekali — murni pemeriksaan tampilan.)
@@ -29,6 +29,14 @@ function check(name: string, condition: boolean, detail = ""): void {
   }
 }
 
+function taskJson(taskId: string): { role: string; assignments: unknown[]; suggestedNext?: { role: string; note: string } } {
+  return JSON.parse(readFileSync(join(CONFIG.tasksDir, taskId, "task.json"), "utf8"));
+}
+
+const assignmentCount = (taskId: string): number => taskJson(taskId).assignments.length;
+const TITLES: Record<string, string> = { qa: "QA Engineer", engineer: "Software Engineer", devops: "DevOps Engineer", uiux: "UI/UX Designer" };
+const suggestedTitle = (taskId: string): string => TITLES[taskJson(taskId).suggestedNext?.role ?? ""] ?? "";
+
 function noteOf(taskId: string): string {
   const task = JSON.parse(readFileSync(join(CONFIG.tasksDir, taskId, "task.json"), "utf8")) as {
     suggestedNext?: { note: string };
@@ -37,9 +45,9 @@ function noteOf(taskId: string): string {
   return task.suggestedNext.note;
 }
 
-const trigger = (page: Page): Locator => page.locator("header button[aria-expanded]");
-/** Kotak oranye = kakek dari pemicu (pemicu → baris flex → kotak). */
-const box = (page: Page): Locator => trigger(page).locator("xpath=../..");
+const trigger = (page: Page): Locator => page.locator("[data-suggestion] button[aria-expanded]");
+/** Kotak oranye tepat di atas kotak chat. */
+const box = (page: Page): Locator => page.locator("[data-suggestion]");
 
 async function height(target: Locator): Promise<number> {
   return (await target.boundingBox())?.height ?? -1;
@@ -64,7 +72,7 @@ async function main(): Promise<void> {
     const clipped = await label.evaluate((el) => el.scrollWidth - el.clientWidth);
     check("teks usul terpotong dengan elipsis", clipped > 0, `selisih ${clipped}px`);
 
-    // 3. Header tidak lagi mendorong percakapan keluar layar.
+    // 3. Header tetap ringkas; usulnya sekarang di atas kotak chat.
     const headerHeight = await height(page.locator("header").first());
     check("header tetap ringkas (< 200px)", headerHeight > 0 && headerHeight < 200, `${headerHeight.toFixed(1)}px`);
     const tabBox = await page.getByRole("button", { name: "Kerja", exact: true }).boundingBox();
@@ -92,14 +100,20 @@ async function main(): Promise<void> {
     await page.keyboard.press("Enter");
     check("Enter menutup", (await trigger(page).getAttribute("aria-expanded")) === "false");
 
-    // 7. Tombol Oper sekarang tetap bekerja dari baris yang tertutup.
-    await page.getByRole("button", { name: "Oper sekarang" }).click();
-    const dialog = page.getByRole("heading", { name: new RegExp(`Oper tugas ${WITH_SUGGESTION}`) });
-    check("dialog operan terbuka dari baris tertutup", await dialog.isVisible());
-    const prefilled = await page.getByPlaceholder("Catatan operan").inputValue();
-    check("catatan usul ikut terisi di dialog", prefilled.trim() === note.trim(), `${prefilled.length} karakter`);
-    await page.getByRole("button", { name: "Batal", exact: true }).click();
-    check("dialog ditutup tanpa mengoper apa pun", !(await dialog.isVisible()));
+    // 7. "Terapkan di chat" dari baris yang tertutup mengisi kotak chat, tanpa mengoper apa pun.
+    const assignmentsBefore = assignmentCount(WITH_SUGGESTION);
+    const draftBefore = await page.getByRole("textbox", { name: "Arahan untuk agen" }).inputValue();
+    await box(page).getByRole("button", { name: "Terapkan di chat" }).click();
+    const role = page.getByRole("combobox", { name: "Bot tujuan" });
+    check("bot tujuan pindah ke bot usulan", ((await role.textContent()) ?? "").includes(suggestedTitle(WITH_SUGGESTION)), (await role.textContent()) ?? "");
+    const prefilled = await page.getByRole("textbox", { name: "Arahan untuk agen" }).inputValue();
+    check("catatan usul masuk ke kotak chat", prefilled.includes(note.trim()), `${prefilled.length} karakter`);
+    check("strip oper tampil", (await page.locator("[data-handoff-hint]").count()) === 1);
+    check("tombol kirim berubah jadi Oper", (await page.getByRole("button", { name: /^Oper ke / }).count()) === 1);
+    check("belum ada yang dioper", assignmentCount(WITH_SUGGESTION) === assignmentsBefore);
+    // Kembalikan kotak chat seperti semula supaya draf pemilik tidak berubah karena gate ini.
+    await page.getByRole("textbox", { name: "Arahan untuk agen" }).fill(draftBefore);
+    await page.waitForTimeout(900);
 
     // 8. Pindah tugas lalu kembali → tertutup lagi.
     await trigger(page).click();

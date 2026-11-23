@@ -6,10 +6,8 @@ import {
   STATUS_LABEL,
   STATUS_STYLE,
   api,
-  type RoleId,
   type AutonomyMode,
   type EngineId,
-  type SettingsView,
   type ContextUsage,
   type RoleInfo,
   type TaskDetail as TaskDetailData,
@@ -19,7 +17,7 @@ import { formatTokens } from "../activity.ts";
 import { projectPath, type Tab } from "../routes.tsx";
 import { useTaskThread } from "../useTaskThread.ts";
 import { AskPanel } from "./AskPanel.tsx";
-import { ENGINE_SHORT, EnginePicker, GeminiRiskNote, botDefaultModel, modelName, usableEngine, useEngines } from "./EnginePicker.tsx";
+import { ENGINE_SHORT, modelName, useEngines } from "./EnginePicker.tsx";
 import { Attachments } from "./Attachments.tsx";
 import { Diff } from "./Diff.tsx";
 import { LiveView, lastBrowserAction } from "./LiveView.tsx";
@@ -30,117 +28,6 @@ import { TaskThread } from "./TaskThread.tsx";
 import { Select } from "./Select.tsx";
 
 const ASK_KEY = "ai-team-ask";
-
-function HandoffDialog({
-  detail,
-  roles,
-  preset,
-  onClose,
-  onDone,
-}: {
-  detail: TaskDetailData;
-  roles: RoleInfo[];
-  preset?: { role: RoleId; note: string };
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [role, setRole] = useState<RoleId>(
-    preset?.role ?? (roles.find((item) => item.id !== detail.task.role)?.id ?? "engineer"),
-  );
-  const [note, setNote] = useState(preset?.note ?? "");
-  const [sending, setSending] = useState(false);
-  const { engines } = useEngines();
-  const [settings, setSettings] = useState<SettingsView>();
-  const [engine, setEngine] = useState<EngineId>("claude");
-  const [model, setModel] = useState<string>();
-  /** Bawaan = setelan bot tujuan; berhenti mengikuti begitu Anda memilih sendiri. */
-  const [touchedEngine, setTouchedEngine] = useState(false);
-
-  useEffect(() => {
-    void api.settings().then(setSettings, () => undefined);
-  }, []);
-
-  useEffect(() => {
-    if (touchedEngine || !settings) return;
-    setEngine(usableEngine(settings.engines[role], engines));
-    setModel(undefined);
-  }, [role, settings, touchedEngine, engines]);
-  const engineReady = engines?.find((item) => item.id === engine)?.available ?? false;
-
-  return (
-    <div className="fixed inset-0 z-20 grid place-items-center bg-scrim p-4" onClick={onClose}>
-      <div className="w-full max-w-lg rounded-xl border border-line bg-raised p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <h3 className="text-sm font-semibold text-ink">Oper tugas {detail.task.id} ke bot lain</h3>
-        <p className="mt-1 text-xs text-muted">
-          Bot baru menerima instruksi asli, ringkasan serah terima dari {ROLE_SHORT[detail.task.role]}, dan catatan Anda.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {roles.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => setRole(item.id)}
-              className={`rounded-lg border px-3 py-1.5 text-sm ${
-                role === item.id ? "border-accent bg-accent-soft text-accent-ink" : "border-line text-ink"
-              }`}
-            >
-              {item.title}
-            </button>
-          ))}
-        </div>
-        <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={3}
-          placeholder="Catatan operan: apa yang harus dikerjakan bot berikutnya"
-          className="mt-3 w-full rounded-lg border border-line bg-page p-2 text-sm text-ink outline-none focus:border-accent"
-        />
-        <label className="mt-2 block text-xs text-muted">Mesin bot tujuan</label>
-        <div className="mt-1">
-          <EnginePicker
-            engines={engines}
-            engine={engine}
-            model={model}
-            defaultModel={botDefaultModel(settings, role, engine) ?? (engine === "claude" ? roles.find((item) => item.id === role)?.model : undefined)}
-            onChange={(next, nextModel) => {
-              setTouchedEngine(true);
-              setEngine(next);
-              setModel(nextModel);
-            }}
-          />
-        </div>
-        {engine === "antigravity" && <GeminiRiskNote className="mt-1" />}
-        <div className="mt-3 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-muted hover:text-ink">
-            Batal
-          </button>
-          <button
-            disabled={sending || !engineReady}
-            title={engineReady ? undefined : "Mesin ini belum punya akun yang siap — lihat Pengaturan → Akun AI"}
-            onClick={async () => {
-              setSending(true);
-              try {
-                await api.handoff(detail.task.id, {
-                  role,
-                  note: note.trim() || undefined,
-                  engine,
-                  model,
-                });
-                onDone();
-                onClose();
-              } catch (error) {
-                alert((error as Error).message);
-                setSending(false);
-              }
-            }}
-            className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover disabled:opacity-50"
-          >
-            Oper sekarang
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /**
  * Mesin penugasan yang sedang berjalan. Claude tanpa lencana supaya header tugas lama tidak
@@ -260,6 +147,7 @@ export function TaskDetail({
   tabInUrl,
   onTab,
   roles,
+  targetUrlFor,
   refreshKey,
   onChanged,
 }: {
@@ -269,13 +157,12 @@ export function TaskDetail({
   tabInUrl: boolean;
   onTab: (tab: Tab, replace?: boolean) => void;
   roles: RoleInfo[];
+  /** URL uji bawaan project (lalu `.env`) untuk kotak chat, kalau tugasnya belum punya. */
+  targetUrlFor?: (projectId: string) => string;
   refreshKey: number;
   onChanged: () => void;
 }) {
-  const [handoff, setHandoff] = useState<{ role: RoleId; note: string } | true | undefined>();
   const [review, setReview] = useState(false);
-  // Usul agen dibiarkan tertutup: catatannya sering panjang dan header tidak ikut ter-scroll.
-  const [suggestOpen, setSuggestOpen] = useState(false);
   // undefined = judul sedang tidak disunting.
   const [titleDraft, setTitleDraft] = useState<string | undefined>(undefined);
   const autoOpened = useRef<string | undefined>(undefined);
@@ -329,9 +216,6 @@ export function TaskDetail({
   const closeAsk = useCallback(() => setAsking(false), []);
   // Pindah tugas tidak boleh meninggalkan nama tugas sebelumnya di kotak sunting.
   useEffect(() => setTitleDraft(undefined), [taskId]);
-
-  // Usul yang baru ditulis agen tidak boleh muncul dalam keadaan terbentang.
-  useEffect(() => setSuggestOpen(false), [taskId, detail?.task.suggestedNext?.at]);
 
   // Tugas yang browsernya sedang hidup langsung membuka tab Live — sekali saja, dan
   // hanya kalau alamatnya belum menyebut tab (tautan dalam tidak boleh dibajak).
@@ -448,12 +332,6 @@ export function TaskDetail({
               Tanya
             </button>
             <button
-              onClick={() => setHandoff(true)}
-              className="rounded-lg border border-line-strong px-2 py-1 text-ink hover:bg-hover"
-            >
-              Oper ke…
-            </button>
-            <button
               onClick={() => setReview(true)}
               className="rounded-lg border border-line-strong px-2 py-1 text-ink hover:bg-hover"
             >
@@ -490,40 +368,6 @@ export function TaskDetail({
             }}
             className="-mx-1 mt-1 w-full rounded border border-accent bg-page px-1 text-sm font-semibold text-ink outline-none"
           />
-        )}
-
-        {task.suggestedNext && (
-          <div className="mt-2 rounded-lg border border-line bg-tag-orange px-3 py-1.5 text-xs text-tag-orange-ink">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                aria-expanded={suggestOpen}
-                onClick={() => setSuggestOpen((value) => !value)}
-                title={suggestOpen ? "Tutup usul agen" : "Baca usul agen selengkapnya"}
-                className="flex min-w-0 flex-1 items-center gap-1.5 rounded text-left hover:opacity-80"
-              >
-                <span aria-hidden className="shrink-0">
-                  {suggestOpen ? "▾" : "▸"}
-                </span>
-                <span className="truncate">
-                  Usul agen: lanjutkan ke <strong>{ROLE_SHORT[task.suggestedNext.role]}</strong>
-                  {suggestOpen ? null : ` — ${task.suggestedNext.note}`}
-                </span>
-              </button>
-              <button
-                onClick={() => setHandoff({ role: task.suggestedNext!.role, note: task.suggestedNext!.note })}
-                className="shrink-0 rounded border border-line-strong px-2 py-0.5 hover:bg-hover"
-              >
-                Oper sekarang
-              </button>
-            </div>
-            {/* Dibatasi tingginya: catatan agen bisa ribuan karakter dan header tidak ikut ter-scroll. */}
-            {suggestOpen && (
-              <p className="mt-1.5 max-h-56 overflow-y-auto break-words whitespace-pre-wrap">
-                {task.suggestedNext.note}
-              </p>
-            )}
-          </div>
         )}
 
         {task.review && (
@@ -573,6 +417,10 @@ export function TaskDetail({
         {tab === "work" && (
           <TaskThread
             taskId={task.id}
+            task={task}
+            roles={roles}
+            defaultTargetUrl={targetUrlFor?.(task.projectId)}
+            onChanged={onChanged}
             events={events}
             status={status}
             taskStatus={task.status}
@@ -605,15 +453,6 @@ export function TaskDetail({
 
       {asking && <AskPanel taskId={task.id} onClose={closeAsk} />}
 
-      {handoff && (
-        <HandoffDialog
-          detail={detail}
-          roles={roles}
-          preset={handoff === true ? undefined : handoff}
-          onClose={() => setHandoff(undefined)}
-          onDone={onChanged}
-        />
-      )}
       {review && <ReviewDialog detail={detail} onClose={() => setReview(false)} onDone={onChanged} />}
     </div>
   );

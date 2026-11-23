@@ -61,6 +61,11 @@ export type Task = {
   assignments: Assignment[];
   review?: Review;
   suggestedNext?: { role: RoleId; note: string; at: string };
+  /**
+   * Dibuat dari chat utama dengan lampiran: menunggu lampiran pesan pertama diunggah sebelum
+   * pesan pembuka dikirim (`POST /tasks/:id/start`). Setelah restart, `resumePending` menjalankannya.
+   */
+  pendingStart?: boolean;
 };
 
 export type TaskSummary = Omit<Task, "description"> & { assetCount: number; hasReport: boolean };
@@ -289,6 +294,27 @@ function nextId(): string {
 
 // ---------- operasi ----------
 
+/** Panjang judul sementara dari pesan pertama, sebelum judul otomatis datang. */
+const FALLBACK_TITLE_MAX = 60;
+const ROLE_MENTION = /(^|\s)@(qa|engineer|devops|uiux)\b/gi;
+
+/**
+ * Judul sementara tugas yang dibuat dari chat utama: baris pertama pesan yang berisi teks, tanpa
+ * sebutan `@role`, dipotong di batas kata.
+ */
+export function fallbackTitle(message: string): string {
+  const line =
+    message
+      .split("\n")
+      .map((part) => part.replace(ROLE_MENTION, "$1").replace(/\s+/g, " ").trim())
+      .find((part) => part.length > 0) ?? "";
+  if (!line) return "Tugas baru";
+  if (line.length <= FALLBACK_TITLE_MAX) return line;
+  const cut = line.slice(0, FALLBACK_TITLE_MAX);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > FALLBACK_TITLE_MAX / 2 ? cut.slice(0, space) : cut).replace(/[\s,.;:–-]+$/, "")}…`;
+}
+
 export function createTask(input: {
   title: string;
   description: string;
@@ -297,6 +323,7 @@ export function createTask(input: {
   targetUrl?: string;
   engine?: EngineId;
   model?: string;
+  pendingStart?: boolean;
 }): Task {
   const now = new Date().toISOString();
   const task: Task = {
@@ -311,6 +338,7 @@ export function createTask(input: {
     updatedAt: now,
     costUsd: 0,
     assignments: [{ role: input.role, startedAt: now, costUsd: 0, ...engineFields(input.engine, input.model) }],
+    ...(input.pendingStart ? { pendingStart: true } : {}),
   };
   mkdirSync(assetsDir(task.id), { recursive: true });
   persist(task);

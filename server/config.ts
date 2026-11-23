@@ -64,6 +64,10 @@ export const CONFIG = {
   stopGraceMs: num("STOP_GRACE_MS", 20_000),
   /** Batas waktu satu jawaban panel Tanya. */
   askTimeoutMs: num("ASK_TIMEOUT_MS", 5 * 60_000),
+  /** Model murah untuk judul otomatis tugas dari pesan pertama (Claude). Gemini memakai model bawaan akun agy. */
+  titleModel: str("MODEL_TITLE", "claude-haiku-5-5"),
+  /** TITLES=0 mematikan judul otomatis; judul sementara dari pesan pertama tetap dipakai. */
+  autoTitles: str("TITLES", "1") !== "0",
   includeUserSettings: str("INCLUDE_USER_SETTINGS", "0") === "1",
   /** Nama host tambahan yang boleh membuka UI/API (dipisah koma); bawaan: 127.0.0.1, localhost, ::1, ai-team.local. */
   allowedHosts: str("ALLOWED_HOSTS", ""),

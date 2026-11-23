@@ -12,11 +12,10 @@ import {
 } from "./api.ts";
 import { accountReady, useAccounts } from "./accounts.ts";
 import { NewProjectDialog } from "./components/NewProjectDialog.tsx";
-import { NewTaskDialog } from "./components/NewTaskDialog.tsx";
 import { ProjectPicker } from "./components/ProjectPicker.tsx";
 import { TaskList } from "./components/TaskList.tsx";
 import { maybeNotify, setTitleBadge, startAttentionStream } from "./notifications.ts";
-import { ROLE_IDS, STATUSES, keepFilters, taskPath, type AppContext } from "./routes.tsx";
+import { ROLE_IDS, STATUSES, keepFilters, newTaskPath, taskPath, type AppContext } from "./routes.tsx";
 import { THEME_LABEL, applyTheme, nextTheme, readTheme, type Theme } from "./theme.ts";
 
 const SIDEBAR_KEY = "ai-team-sidebar";
@@ -31,7 +30,6 @@ export function App() {
   const [targetUrl, setTargetUrl] = useState("");
   const [settings, setSettings] = useState<SettingsData>();
   const settingsRef = useRef<SettingsData | undefined>(undefined);
-  const [creating, setCreating] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [theme, setTheme] = useState<Theme>(() => readTheme());
@@ -219,8 +217,8 @@ export function App() {
 
   // Objek yang stabil: konsumen useOutletContext hanya render ulang kalau isinya memang berubah.
   const context = useMemo<AppContext>(
-    () => ({ tasks, tasksLoaded, roles, projects, refreshKey, refresh, onSettingsSaved }),
-    [tasks, tasksLoaded, roles, projects, refreshKey, refresh, onSettingsSaved],
+    () => ({ tasks, tasksLoaded, roles, projects, targetUrl, refreshKey, refresh, onSettingsSaved }),
+    [tasks, tasksLoaded, roles, projects, targetUrl, refreshKey, refresh, onSettingsSaved],
   );
 
   // Mesin mengikuti akun: tanpa satu pun akun siap, tugas baru tidak bisa dibuat.
@@ -251,7 +249,7 @@ export function App() {
               »
             </button>
             <button
-              onClick={() => setCreating(true)}
+              onClick={() => navigate(newTaskPath(search))}
               disabled={Boolean(newTaskBlocked)}
               title={newTaskBlocked ?? "Tugas baru"}
               aria-label="Tugas baru"
@@ -274,7 +272,7 @@ export function App() {
               <h1 className="text-sm font-semibold tracking-wide text-ink">AI TEAM</h1>
             </div>
             <button
-              onClick={() => setCreating(true)}
+              onClick={() => navigate(newTaskPath(search))}
               disabled={Boolean(newTaskBlocked)}
               title={newTaskBlocked}
               className="ml-auto rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover disabled:opacity-40"
@@ -397,19 +395,6 @@ export function App() {
         />
       )}
 
-      {creating && (
-        <NewTaskDialog
-          roles={roles}
-          projects={projects}
-          defaultProjectId={filterProject || projects[0]?.id || ""}
-          defaultTargetUrl={targetUrl}
-          onClose={() => setCreating(false)}
-          onCreated={(id) => {
-            navigate(taskPath(id, undefined, search));
-            refresh();
-          }}
-        />
-      )}
     </div>
   );
 }

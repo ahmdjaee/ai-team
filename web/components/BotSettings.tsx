@@ -236,7 +236,7 @@ export function BotSettings({
     <section>
       <h3 className="text-xs uppercase tracking-wide text-muted">Bot</h3>
       <p className="mt-1 text-xs text-faint">
-        Bawaan untuk tugas dan operan baru; bisa diganti per tugas di form Tugas baru dan saat Oper. Model dan penalaran yang
+        Bawaan untuk tugas dan operan baru; bisa diganti per pesan lewat pilihan bot dan mesin di kotak chat tugas. Model dan penalaran yang
         dikosongkan memakai nilai <code>.env</code>.
       </p>
 

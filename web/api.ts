@@ -261,18 +261,24 @@ export const api = {
   deleteAttachment: (id: string, file: string) =>
     request<{ ok: true }>(`/api/tasks/${encodeURIComponent(id)}/attachments/${encodeURIComponent(file)}`, { method: "DELETE" }),
   engines: (refresh = false) => request<{ engines: EngineInfo[] }>(`/api/engines${refresh ? "?refresh=1" : ""}`),
+  /** Tanpa `title`, server memberi judul dari pesan pertama lalu judul otomatis menyusul. */
   createTask: (body: {
-    title: string;
+    title?: string;
     description: string;
     role: RoleId;
     projectId: string;
     targetUrl?: string;
     engine?: EngineId;
     model?: string;
+    /** Tahan pesan pembuka sampai lampiran terunggah dan `startTask` dipanggil. */
+    hold?: boolean;
   }) =>
     request<{ task: Task }>("/api/tasks", { method: "POST", body: JSON.stringify(body) }),
-  message: (id: string, text: string, attachments: string[] = []) =>
-    request<{ ok: true }>(`/api/tasks/${id}/message`, { method: "POST", body: JSON.stringify({ text, attachments }) }),
+  startTask: (id: string, attachments: string[] = []) =>
+    request<{ ok: true; task: Task }>(`/api/tasks/${id}/start`, { method: "POST", body: JSON.stringify({ attachments }) }),
+  /** `targetUrl` hanya kalau URL uji di kotak chat diganti; bot diberi tahu di pesan ini. */
+  message: (id: string, text: string, attachments: string[] = [], targetUrl?: string) =>
+    request<{ ok: true }>(`/api/tasks/${id}/message`, { method: "POST", body: JSON.stringify({ text, attachments, targetUrl }) }),
   interrupt: (id: string) => request<{ ok: true }>(`/api/tasks/${id}/interrupt`, { method: "POST" }),
   cancel: (id: string) => request<{ ok: true }>(`/api/tasks/${id}/cancel`, { method: "POST" }),
   /** `confirm` harus sama persis dengan ID tugas — server menolak kalau tidak. */
@@ -281,7 +287,10 @@ export const api = {
       method: "DELETE",
       body: JSON.stringify({ confirm }),
     }),
-  handoff: (id: string, body: { role: RoleId; note?: string; engine?: EngineId; model?: string }) =>
+  handoff: (
+    id: string,
+    body: { role: RoleId; note?: string; engine?: EngineId; model?: string; targetUrl?: string; attachments?: string[] },
+  ) =>
     request<{ ok: true; task: Task }>(`/api/tasks/${id}/handoff`, { method: "POST", body: JSON.stringify(body) }),
   review: (id: string, body: { status: "approved" | "changes_requested"; comment: string; sendBackToAgent: boolean }) =>
     request<{ ok: true; task: Task }>(`/api/tasks/${id}/review`, { method: "POST", body: JSON.stringify(body) }),

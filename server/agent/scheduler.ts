@@ -9,6 +9,7 @@ import {
   ACTIVE_STATUSES,
   activeTasks,
   addAssignment,
+  composeAttachmentMessage,
   currentAssignment,
   engineOf,
   extractHandoffSummary,
@@ -235,11 +236,16 @@ class Scheduler {
     return usable.ok ? undefined : usable.reason;
   }
 
-  /** Tugas baru: kirim pesan pembuka dan biarkan antrean yang mengatur gilirannya. */
-  start(task: Task): void {
-    this.runnerFor(task).send(composeOpeningMessage(task), {
-      display: task.description || task.title,
+  /**
+   * Tugas baru: kirim pesan pembuka dan biarkan antrean yang mengatur gilirannya. Lampiran pesan
+   * pertama dari chat utama ikut ditulis di pesan pembuka.
+   */
+  start(task: Task, attachments: string[] = []): void {
+    const current = task.pendingStart ? (updateTask(task.id, { pendingStart: undefined }) ?? task) : task;
+    this.runnerFor(current).send(composeAttachmentMessage(current.id, composeOpeningMessage(current), attachments), {
+      display: current.description || current.title,
       from: "owner",
+      attachments,
     });
   }
 
@@ -302,6 +308,7 @@ class Scheduler {
     role: RoleId,
     note?: string,
     choice: { engine?: EngineId; model?: string } = {},
+    attachments: string[] = [],
   ): Promise<Task | undefined> {
     const before = getTask(taskId);
     if (!before) return undefined;
@@ -329,9 +336,10 @@ class Scheduler {
     // Label mesin hanya kalau berbeda dari Claude atau berganti: operan biasa tetap seperti dulu.
     const showEngine = next.engine !== "claude" || engineOf(previous) !== next.engine;
     const target = `${ROLES[role].title}${showEngine ? ` (${ENGINE_LABEL[next.engine]})` : ""}`;
-    this.runnerFor(task).send(composeHandoffMessage(task, previous, note), {
+    this.runnerFor(task).send(composeAttachmentMessage(task.id, composeHandoffMessage(task, previous, note), attachments), {
       display: `Dioper ke ${target}${note ? ` — ${note}` : ""}`,
       from: "system",
+      attachments,
     });
     return task;
   }

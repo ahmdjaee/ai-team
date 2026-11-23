@@ -9,6 +9,7 @@ import {
   type TaskStatus,
 } from "./api.ts";
 import { Memory } from "./components/Memory.tsx";
+import { NewTaskChat } from "./components/NewTaskChat.tsx";
 import { ProjectPage } from "./components/ProjectPage.tsx";
 import { Settings } from "./components/Settings.tsx";
 import { TaskDetail } from "./components/TaskDetail.tsx";
@@ -51,16 +52,26 @@ export type AppContext = {
   tasksLoaded: boolean;
   roles: RoleInfo[];
   projects: ProjectInfo[];
+  /** URL uji bawaan dari `.env`; project boleh punya sendiri. */
+  targetUrl: string;
   refreshKey: number;
   refresh: () => void;
   onSettingsSaved: (next: SettingsData) => void;
 };
 
+/** Chat tugas baru (`/tasks/new`), dengan filter yang sedang aktif. */
+export function newTaskPath(search?: URLSearchParams | string): string {
+  return `/tasks/new${search === undefined ? "" : keepFilters(search)}`;
+}
+
 export function useAppContext(): AppContext {
   return useOutletContext<AppContext>();
 }
 
-/** `/` → tugas teratas, dengan replace supaya Back tidak memantul ke sini lagi. */
+/**
+ * `/` → tugas teratas, dengan replace supaya Back tidak memantul ke sini lagi. Belum ada tugas: chat
+ * utama yang masih kosong langsung terbuka, pesan pertama membuat tugasnya.
+ */
 export function TasksIndex() {
   const { tasks, tasksLoaded } = useAppContext();
   const [search] = useSearchParams();
@@ -70,31 +81,34 @@ export function TasksIndex() {
 
   if (first) return <Navigate to={taskPath(first.id, undefined, search)} replace />;
   if (!tasksLoaded) return <p className="p-6 text-sm text-faint">Memuat daftar tugas…</p>;
+  return <NewTaskRoute />;
+}
+
+export function NewTaskRoute() {
+  const { roles, projects, targetUrl, refresh } = useAppContext();
+  const [search] = useSearchParams();
+  const navigate = useNavigate();
+  const project = search.get("project");
   return (
-    <div className="grid h-full place-items-center px-6 text-center text-sm text-faint">
-      <div>
-        <p>
-          Belum ada tugas{project ? " di project ini" : ""}. Klik <span className="text-muted">+ Tugas</span> untuk
-          mulai.
-        </p>
-        {project && (
-          <Link
-            to={projectPath(project, search)}
-            className="mt-2 inline-block text-xs text-accent underline underline-offset-2"
-          >
-            Buka halaman project
-          </Link>
-        )}
-      </div>
-    </div>
+    <NewTaskChat
+      roles={roles}
+      projects={projects}
+      defaultProjectId={(project && projects.some((item) => item.id === project) ? project : projects[0]?.id) ?? ""}
+      defaultTargetUrl={targetUrl}
+      onCreated={(id) => {
+        navigate(taskPath(id, undefined, search));
+        refresh();
+      }}
+    />
   );
 }
 
 export function TaskRoute() {
   const { id, tab } = useParams();
-  const { roles, refreshKey, refresh } = useAppContext();
+  const { roles, projects, targetUrl, refreshKey, refresh } = useAppContext();
   const [search] = useSearchParams();
   const navigate = useNavigate();
+  const targetUrlFor = (projectId: string) => projects.find((item) => item.id === projectId)?.targetUrl || targetUrl;
 
   if (!id) return <Navigate to="/" replace />;
   // Tab yang tidak dikenal dikembalikan ke tab bawaan tugas itu, bukan ke daftar.
@@ -107,6 +121,7 @@ export function TaskRoute() {
       tabInUrl={tab !== undefined}
       onTab={(next, replace) => navigate(taskPath(id, next, search), { replace })}
       roles={roles}
+      targetUrlFor={targetUrlFor}
       refreshKey={refreshKey}
       onChanged={refresh}
     />

@@ -2,10 +2,10 @@
 
 ## Bot tidak boleh membuat Artifact
 
-- Sesi Claude milik app (empat bot, panel Tanya, kurator) tidak boleh memakai tool `Artifact`, `ArtifactComments`,
+- Sesi Claude milik app (empat bot, panel Tanya, kurator, pemberi judul otomatis) tidak boleh memakai tool `Artifact`, `ArtifactComments`,
   `ArtifactData`, maupun konektor claude.ai (`mcp__claude_ai_*`, termasuk Claude Docs).
 - Penegaknya `ARTIFACT_TOOLS` dan `DENY_ALWAYS` di `server/roles.ts`, ditambah `disallowedTools` di
-  `server/agent/runner.ts`, `server/agent/ask.ts`, dan `server/agent/curator.ts`. Jangan hapus atau longgarkan;
+  `server/agent/runner.ts`, `server/agent/ask.ts`, `server/agent/curator.ts`, dan `server/agent/titler.ts`. Jangan hapus atau longgarkan;
   sesi baru yang memakai Claude harus ikut memasang keduanya.
 - Alasannya: larangan di `~/.claude/CLAUDE.md` laptop tidak terbaca sesi app, karena app memakai folder login sendiri.
 - Uji yang menjaganya: `check:roles`, `check:runner` (S2b), dan `check:acp` (F4k).
