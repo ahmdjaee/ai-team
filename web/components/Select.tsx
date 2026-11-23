@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 export type SelectOption = {
@@ -7,6 +7,12 @@ export type SelectOption = {
   /** Baris kedua kecil di bawah label, mis. keterangan model dari akun. */
   description?: string;
   disabled?: boolean;
+  /** Pilihan dengan `group` yang sama dikelompokkan di bawah satu judul (`renderGroup`). */
+  group?: string;
+  /** Avatar atau ikon di depan label, menggantikan tanda ✓ (pilihan terpilih ditandai ✓ di kanan). */
+  leading?: ReactNode;
+  /** Teks kecil redup di kanan label, mis. `@qa` atau nama model bawaan. */
+  meta?: string;
 };
 
 const GAP = 4;
@@ -38,6 +44,10 @@ export function Select({
   size = "md",
   muted = false,
   className = "",
+  variant = "field",
+  trigger: triggerContent,
+  renderGroup,
+  listWidth,
 }: {
   value: string;
   options: SelectOption[];
@@ -54,6 +64,14 @@ export function Select({
   muted?: boolean;
   /** Lebar dan jarak tombol pemicu, mis. `w-full`, `flex-1`, `ml-1`. */
   className?: string;
+  /** chip = pil tanpa garis untuk toolbar kotak chat; warnanya dari `className`. */
+  variant?: "field" | "chip";
+  /** Isi tombol pemicu sendiri (mis. avatar + nama); bawaannya label pilihan terpilih. */
+  trigger?: ReactNode;
+  /** Judul grup di daftar (lihat `SelectOption.group`). */
+  renderGroup?: (group: string) => ReactNode;
+  /** Lebar daftar (px) kalau isinya butuh lebih dari bawaan. */
+  listWidth?: number;
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
@@ -108,7 +126,7 @@ export function Select({
     const wanted = Math.min(MAX_HEIGHT, popup.scrollHeight);
     const up = below < wanted && above > below;
     const maxHeight = Math.max(96, Math.min(MAX_HEIGHT, up ? above : below));
-    const width = Math.max(anchor.width, Math.min(popup.offsetWidth, MAX_WIDTH));
+    const width = Math.max(anchor.width, Math.min(popup.offsetWidth, listWidth ?? MAX_WIDTH));
     const left = Math.max(EDGE, Math.min(anchor.left, window.innerWidth - width - EDGE));
     setPosition({
       left,
@@ -116,7 +134,7 @@ export function Select({
       maxHeight,
       ...(up ? { bottom: window.innerHeight - anchor.top + GAP } : { top: anchor.bottom + GAP }),
     });
-  }, []);
+  }, [listWidth]);
 
   useLayoutEffect(() => {
     if (open) reposition();
@@ -226,13 +244,19 @@ export function Select({
         title={title ?? selected?.description}
         onClick={() => (open ? close(false) : show())}
         onKeyDown={onTriggerKeyDown}
-        className={`inline-flex min-w-0 items-center gap-1.5 rounded-lg border bg-page text-left outline-none disabled:opacity-40 ${
-          muted ? "text-muted" : "text-ink"
-        } ${pad} ${
-          open ? "border-accent" : "border-line hover:border-line-strong focus-visible:border-accent"
-        } ${className}`}
+        className={
+          variant === "chip"
+            ? `inline-flex min-w-0 items-center gap-1.5 rounded-full text-left text-[13px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40 ${
+                open ? "bg-hover" : ""
+              } ${className}`
+            : `inline-flex min-w-0 items-center gap-1.5 rounded-lg border bg-page text-left outline-none disabled:opacity-40 ${
+                muted ? "text-muted" : "text-ink"
+              } ${pad} ${open ? "border-accent" : "border-line hover:border-line-strong focus-visible:border-accent"} ${className}`
+        }
       >
-        <span className={`min-w-0 flex-1 truncate ${selected ? "" : "text-muted"}`}>{selected?.label ?? placeholder}</span>
+        {triggerContent ?? (
+          <span className={`min-w-0 flex-1 truncate ${selected ? "" : "text-muted"}`}>{selected?.label ?? placeholder}</span>
+        )}
         <svg viewBox="0 0 12 12" aria-hidden="true" className={`h-2.5 w-2.5 shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`}>
           <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -254,14 +278,62 @@ export function Select({
               top: position?.top,
               bottom: position?.bottom,
               minWidth: position?.minWidth,
-              maxWidth: Math.min(MAX_WIDTH, window.innerWidth - EDGE * 2),
+              maxWidth: Math.min(listWidth ?? MAX_WIDTH, window.innerWidth - EDGE * 2),
+              width: listWidth,
               maxHeight: position?.maxHeight ?? MAX_HEIGHT,
               visibility: position ? "visible" : "hidden",
             }}
-            className="z-50 w-max overflow-y-auto rounded-xl border border-line bg-raised py-1 shadow-2xl outline-none"
+            className={`z-50 overflow-y-auto rounded-xl border border-line bg-raised shadow-2xl outline-none ${
+              variant === "chip" ? "p-1.5" : "w-max py-1"
+            }`}
           >
             {options.map((option, index) => {
               const isSelected = index === selectedIndex;
+              const header =
+                option.group !== undefined && option.group !== options[index - 1]?.group ? (
+                  <div
+                    role="presentation"
+                    className={`flex items-center gap-1.5 px-2.5 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-faint ${
+                      index > 0 ? "mt-1 border-t border-line pt-2" : ""
+                    }`}
+                  >
+                    {renderGroup ? renderGroup(option.group) : option.group}
+                  </div>
+                ) : null;
+              if (option.leading !== undefined || variant === "chip") {
+                return (
+                  <Fragment key={`${option.value}-${index}`}>
+                    {header}
+                    <div
+                      id={optionId(index)}
+                      role="option"
+                      aria-selected={isSelected}
+                      aria-disabled={option.disabled || undefined}
+                      data-index={index}
+                      title={option.description}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseMove={() => option.disabled || active === index || setActive(index)}
+                      onClick={() => pick(index)}
+                      className={`flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-1.5 ${
+                        option.disabled ? "opacity-40" : index === active ? "bg-hover" : ""
+                      } ${option.leading === undefined ? "pl-7" : ""}`}
+                    >
+                      {option.leading}
+                      <span className="min-w-0 flex-1">
+                        <span className="flex min-w-0 items-baseline gap-1.5">
+                          <span className={`truncate text-[13px] text-ink ${isSelected ? "font-semibold" : ""}`}>{option.label}</span>
+                          {option.meta && option.leading === undefined && (
+                            <span className="shrink-0 truncate text-xs text-faint">{option.meta}</span>
+                          )}
+                        </span>
+                        {option.description && <span className="block truncate text-[11px] text-muted">{option.description}</span>}
+                      </span>
+                      {option.meta && option.leading !== undefined && <span className="shrink-0 text-[11px] text-faint">{option.meta}</span>}
+                      <span className={`w-3 shrink-0 text-xs ${isSelected ? "text-accent-ink" : "text-transparent"}`}>✓</span>
+                    </div>
+                  </Fragment>
+                );
+              }
               return (
                 <div
                   key={`${option.value}-${index}`}
