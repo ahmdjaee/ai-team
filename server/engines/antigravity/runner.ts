@@ -1,8 +1,8 @@
 import * as acp from "@agentclientprotocol/sdk";
 import { BrowserSession, closeBrowserFor, createBrowserServer } from "../../browser/mcp.ts";
 import { control } from "../../browser/control.ts";
-import { geminiEnv } from "../../accounts/gemini.ts";
-import { markAccountExpired } from "../../accounts/index.ts";
+import { isGeminiAuthError as isAgyAuthError } from "ai-agent-auth/gemini";
+import { geminiEnv, markAccountExpired } from "../../accounts/index.ts";
 import { CONFIG } from "../../config.ts";
 import { effortFor } from "../../settings.ts";
 import { contextBlock, workspaceForTask } from "../../context.ts";
@@ -18,7 +18,6 @@ import type { ApprovalDecision, RunnerHooks } from "../../agent/runner.ts";
 import { applySessionConfig } from "./config-options.ts";
 import { AcpEventMapper } from "./events.ts";
 import { HOOK_PATH, registerHookHandler, type HookAnswer, type HookPayload } from "./hooks.ts";
-import { isAgyAuthError } from "./availability.ts";
 import { decideTool } from "./permissions.ts";
 import { spawnAgy, type AgyProcess, type Launcher } from "./process.ts";
 import { toAskQuestions, uiTool } from "./tools.ts";

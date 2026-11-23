@@ -9,8 +9,9 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { BrowserSession, closeBrowserFor, createBrowserServer } from "../browser/mcp.ts";
 import { control } from "../browser/control.ts";
-import { claudeEnv, claudeSessionExists, isClaudeAuthError } from "../accounts/claude.ts";
-import { markAccountExpired } from "../accounts/index.ts";
+import { isClaudeAuthError } from "ai-agent-auth/claude";
+import { claudeSessionExists } from "../accounts/claude.ts";
+import { claudeEnv, markAccountExpired } from "../accounts/index.ts";
 import { CONFIG } from "../config.ts";
 import { effortFor, modelFor } from "../settings.ts";
 import { contextBlock, workspaceForTask } from "../context.ts";

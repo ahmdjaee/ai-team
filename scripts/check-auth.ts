@@ -3,7 +3,7 @@
  * tanpa ANTHROPIC_API_KEY. Jalankan: bun run check:auth
  */
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { claudeEnv } from "../server/accounts/claude.ts";
+import { claudeEnv } from "../server/accounts/index.ts";
 
 const started = Date.now();
 console.log("ANTHROPIC_API_KEY di shell :", process.env.ANTHROPIC_API_KEY ? "ADA (akan diabaikan)" : "tidak ada");

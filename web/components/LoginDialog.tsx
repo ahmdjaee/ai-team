@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { api, type ProviderId } from "../api.ts";
+import { useLoginFlow, type LoginActions } from "ai-agent-auth/react";
+import { api, type AccountView, type ProviderId } from "../api.ts";
 import { putAccount, useAccount } from "../accounts.ts";
 import { GeminiRiskNote } from "./EnginePicker.tsx";
 
@@ -14,11 +14,11 @@ const HINT: Record<ProviderId, { page: string; code: string }> = {
   },
 };
 
-function remaining(expiresAt: string | undefined, now: number): string | undefined {
-  if (!expiresAt) return undefined;
-  const left = Math.max(0, Math.round((Date.parse(expiresAt) - now) / 1000));
-  return `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
-}
+const LOGIN_ACTIONS: LoginActions<AccountView> = {
+  startLogin: (provider) => api.startLogin(provider as ProviderId),
+  submitCode: (provider, code) => api.submitLoginCode(provider as ProviderId, code),
+  dismissLogin: (provider) => api.closeLogin(provider as ProviderId),
+};
 
 /**
  * Hubungkan akun lewat alur login resmi CLI-nya, dijalankan server sebagai proses milik app:
@@ -27,77 +27,18 @@ function remaining(expiresAt: string | undefined, now: number): string | undefin
  */
 export function LoginDialog({ provider, onClose }: { provider: ProviderId; onClose: () => void }) {
   const account = useAccount(provider);
-  const login = account?.login;
-  const phase = login?.phase;
-  const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-  const [copied, setCopied] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  const started = useRef(false);
-
-  const start = async () => {
-    setError(undefined);
-    setCode("");
-    setBusy(true);
-    try {
-      putAccount((await api.startLogin(provider)).account);
-    } catch (failure) {
-      setError((failure as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // Dibuka tanpa login yang berjalan → mulai satu. Login yang masih berjalan dilanjutkan.
-  useEffect(() => {
-    if (!account || started.current) return;
-    started.current = true;
-    if (!login || login.phase === "cancelled" || login.phase === "failed" || login.phase === "done") void start();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account]);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const submit = async () => {
-    if (!code.trim() || busy) return;
-    setBusy(true);
-    setError(undefined);
-    try {
-      putAccount((await api.submitLoginCode(provider, code.trim())).account);
-      setCode("");
-    } catch (failure) {
-      setError((failure as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  // Mulai login kalau belum ada yang berjalan; login yang masih berjalan dilanjutkan.
+  const flow = useLoginFlow({ provider, account, actions: LOGIN_ACTIONS, onAccount: putAccount });
+  const { login, phase, active, code, busy, error, copied } = flow;
 
   const close = async (cancel: boolean) => {
     // Batal menghentikan proses login; Selesai/Tutup cukup melupakan hasilnya.
-    if (cancel || (phase && phase !== "starting" && phase !== "awaiting_code" && phase !== "verifying")) {
-      await api.closeLogin(provider).then((data) => putAccount(data.account), () => undefined);
-    }
+    await flow.close(cancel);
     onClose();
   };
 
-  const copy = async () => {
-    if (!login?.url) return;
-    try {
-      await navigator.clipboard.writeText(login.url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-    }
-  };
-
   const label = account?.label ?? (provider === "claude" ? "Claude" : "Gemini");
-  const active = phase === "starting" || phase === "awaiting_code" || phase === "verifying";
-  const left = active ? remaining(login?.expiresAt, now) : undefined;
+  const left = flow.remaining;
 
   return (
     <div className="fixed inset-0 z-30 grid place-items-center bg-scrim p-4">
@@ -142,7 +83,7 @@ export function LoginDialog({ provider, onClose }: { provider: ProviderId; onClo
                       >
                         Buka halaman login ↗
                       </a>
-                      <button onClick={() => void copy()} className="rounded-lg border border-line px-2.5 py-1.5 text-xs text-muted hover:border-line-strong">
+                      <button onClick={() => void flow.copy()} className="rounded-lg border border-line px-2.5 py-1.5 text-xs text-muted hover:border-line-strong">
                         {copied ? "Tersalin" : "Salin tautan"}
                       </button>
                     </>
@@ -160,9 +101,9 @@ export function LoginDialog({ provider, onClose }: { provider: ProviderId; onClo
                 <div className="mt-2 flex gap-2">
                   <input
                     value={code}
-                    onChange={(event) => setCode(event.target.value)}
+                    onChange={(event) => flow.setCode(event.target.value)}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter") void submit();
+                      if (event.key === "Enter") void flow.submit();
                     }}
                     disabled={phase !== "awaiting_code" || busy}
                     placeholder={phase === "verifying" ? "Memeriksa…" : "Tempel kode di sini"}
@@ -172,7 +113,7 @@ export function LoginDialog({ provider, onClose }: { provider: ProviderId; onClo
                     className="min-w-0 flex-1 rounded-lg border border-line bg-page px-3 py-1.5 font-mono text-sm text-ink outline-none focus:border-accent disabled:opacity-50"
                   />
                   <button
-                    onClick={() => void submit()}
+                    onClick={() => void flow.submit()}
                     disabled={phase !== "awaiting_code" || busy || !code.trim()}
                     className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink hover:border-line-strong disabled:opacity-40"
                   >
@@ -209,7 +150,7 @@ export function LoginDialog({ provider, onClose }: { provider: ProviderId; onClo
                 Tutup
               </button>
               <button
-                onClick={() => void start()}
+                onClick={() => void flow.start()}
                 disabled={busy}
                 className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-on-accent hover:bg-accent-hover disabled:opacity-40"
               >

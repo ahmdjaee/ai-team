@@ -1,4 +1,5 @@
-import { useMemo, useSyncExternalStore } from "react";
+import { useMemo } from "react";
+import { accountReady as libraryAccountReady, createAccountsStore, useAccounts as useStoredAccounts } from "ai-agent-auth/react";
 import { api, type AccountView, type EngineId, type EngineInfo, type ProviderId } from "./api.ts";
 import { subscribe } from "./realtime.ts";
 
@@ -7,50 +8,29 @@ import { subscribe } from "./realtime.ts";
  * di sidebar, dan pemilih mesin. Server mengirim `accounts_changed` di topik `global` setiap kali
  * akun atau status login berubah, jadi tidak ada polling.
  */
-
-let accounts: AccountView[] | undefined;
-const listeners = new Set<() => void>();
-let stopStream: (() => void) | undefined;
-let request = 0;
-
-function emit(): void {
-  for (const listener of listeners) listener();
-}
+export const accountsStore = createAccountsStore<AccountView>({
+  load: async () => (await api.accounts()).accounts,
+  subscribe: (reload) =>
+    subscribe<{ type: string }>(
+      "global",
+      (event) => {
+        if (event.type === "accounts_changed") reload();
+      },
+      { onReady: reload },
+    ),
+});
 
 export function reloadAccounts(): void {
-  const id = (request += 1);
-  void api.accounts().then(
-    (data) => {
-      // Jawaban lama yang datang belakangan tidak boleh menimpa yang baru.
-      if (id !== request) return;
-      accounts = data.accounts;
-      emit();
-    },
-    () => undefined,
-  );
-}
-
-function listen(listener: () => void): () => void {
-  listeners.add(listener);
-  stopStream ??= subscribe<{ type: string }>(
-    "global",
-    (event) => {
-      if (event.type === "accounts_changed") reloadAccounts();
-    },
-    { onReady: reloadAccounts },
-  );
-  return () => listeners.delete(listener);
+  accountsStore.reload();
 }
 
 /** Simpan hasil aksi akun (login, Periksa, Keluar) tanpa menunggu event berikutnya. */
 export function putAccount(account: AccountView): void {
-  if (!accounts) return;
-  accounts = accounts.map((item) => (item.provider === account.provider ? account : item));
-  emit();
+  accountsStore.put(account);
 }
 
 export function useAccounts(): AccountView[] | undefined {
-  return useSyncExternalStore(listen, () => accounts);
+  return useStoredAccounts(accountsStore);
 }
 
 export function useAccount(provider: ProviderId): AccountView | undefined {
@@ -59,7 +39,7 @@ export function useAccount(provider: ProviderId): AccountView | undefined {
 
 /** Akun bisa dipakai menjalankan bot? `error` (mis. jaringan saat diperiksa) tidak memblokir. */
 export function accountReady(account?: AccountView): boolean {
-  return account?.state === "ok" || account?.state === "error";
+  return libraryAccountReady(account);
 }
 
 /** Kalimat singkat kenapa mesin akun ini belum bisa dipakai. */
