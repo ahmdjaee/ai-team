@@ -27,6 +27,13 @@ const list = (raw: string): string[] =>
 /** Alias domain lokal dari README (nginx di port 80). */
 export const LOCAL_ALIAS = "ai-team.local";
 
+/**
+ * Alias yang dianjurkan (nginx di port 80). Browser memetakan `*.localhost` ke loopback sendiri (RFC 6761),
+ * tanpa DNS/mDNS, jadi namanya selalu dipercaya. Ia juga secure context: di `http://ai-team.local` browser
+ * memblokir Notification API, di sini tidak. Sengaja bukan anggota LOOPBACK, karena Origin tanpa port (nginx :80) harus lolos.
+ */
+export const SECURE_ALIAS = "ai-team.localhost";
+
 /** `name` diarahkan ke 127.x/::1 oleh isi berkas hosts ini? */
 export function hostsMapsToLoopback(hostsText: string, name: string): boolean {
   for (const raw of hostsText.split("\n")) {
@@ -47,7 +54,7 @@ function readHosts(): string {
   }
 }
 
-const hosts = new Set([...LOOPBACK, ...list(CONFIG.allowedHosts)]);
+const hosts = new Set([...LOOPBACK, SECURE_ALIAS, ...list(CONFIG.allowedHosts)]);
 
 /** Dibaca ulang paling sering tiap 30 detik: menambah baris /etc/hosts tidak perlu me-restart server. */
 const ALIAS_RECHECK_MS = 30_000;

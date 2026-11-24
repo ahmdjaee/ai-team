@@ -33,28 +33,37 @@ tombol **+ Tugas** nonaktif dan banner di atas halaman menjelaskan kenapa.
 Pengembangan UI (hot reload di 4321, API tetap 4320): `bun run dev`.
 Pindahkan laporan dari versi lama (kalau ada `data/reports/`): `bun run migrate:v1`.
 
-### Alias domain lokal (`http://ai-team.local`)
+### Alias domain lokal (`http://ai-team.localhost`)
 
-Supaya tidak mengetik `127.0.0.1:4320`: nginx yang sudah ada di port 80 meneruskan nama `ai-team.local`
-ke server aplikasi. Berkas vhost-nya ada di `deploy/nginx/ai-team.local.conf`: header `Upgrade` diteruskan
-untuk WebSocket `/api/ws`, dan buffering dimatikan supaya Live MJPEG tidak tertahan. Pasang sekali:
+Supaya tidak mengetik `127.0.0.1:4320`: nginx yang sudah ada di port 80 meneruskan nama `ai-team.localhost`
+(dan nama lama `ai-team.local`) ke server aplikasi. Berkas vhost-nya ada di `deploy/nginx/ai-team.local.conf`:
+header `Upgrade` diteruskan untuk WebSocket `/api/ws`, dan buffering dimatikan supaya Live MJPEG tidak tertahan.
+Pasang sekali:
 
 ```bash
-echo "127.0.0.1 ai-team.local" | sudo tee -a /etc/hosts
 sudo cp deploy/nginx/ai-team.local.conf /etc/nginx/sites-available/ai-team.local
 sudo ln -s /etc/nginx/sites-available/ai-team.local /etc/nginx/sites-enabled/ai-team.local
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-Sudah memasang versi lama (tanpa `map $http_upgrade`)? Salin ulang berkasnya lalu `sudo nginx -t && sudo systemctl
-reload nginx`. Tanpa itu halaman lewat `ai-team.local` tetap terbuka, tapi tidak menerima pembaruan live
-(penanda *terputus* menyala).
+Browser sendiri mengarahkan `*.localhost` ke mesin ini, jadi baris `/etc/hosts` tidak perlu.
+
+**Pakai `ai-team.localhost`, bukan `ai-team.local`.** Browser hanya menganggap HTTPS, `localhost`, `127.0.0.1`,
+dan `*.localhost` sebagai *secure context*. Di `http://ai-team.local` browser memblokir notifikasi tanpa pernah
+bertanya, dan setelan situs pun tidak bisa membukanya. Izin notifikasi berlaku per alamat, jadi klik
+**Izinkan notifikasi** sekali lagi setelah pindah alamat.
+
+Sudah memasang versi lama (tanpa `map $http_upgrade` atau tanpa `ai-team.localhost` di `server_name`)? Salin ulang
+berkasnya lalu `sudo nginx -t && sudo systemctl reload nginx`. Tanpa `map $http_upgrade`, halaman tetap terbuka
+tapi tidak menerima pembaruan live (penanda *terputus* menyala).
 
 `127.0.0.1:4320` tetap bisa dipakai; `ai-team.service` tidak perlu di-restart. Alias ini hanya untuk
-build produksi — UI dev `bun run dev` tetap di port Vite 4321. `/etc/hosts` dibaca lebih dulu daripada
-mDNS (`nsswitch: files mdns4_minimal`), jadi akhiran `.local` aman walau Avahi aktif. Server baru
-mempercayai nama `ai-team.local` kalau baris `/etc/hosts` di atas ada — tanpa itu nama `.local` dijawab
-mDNS dan bisa diklaim perangkat lain di LAN (DNS rebinding).
+build produksi — UI dev `bun run dev` tetap di port Vite 4321.
+
+Nama lama `ai-team.local` masih dilayani, tapi server hanya mempercayainya kalau `/etc/hosts` mengarahkannya ke
+loopback (`127.0.0.1 ai-team.local`). Tanpa baris itu nama `.local` dijawab mDNS dan bisa diklaim perangkat lain di
+LAN (DNS rebinding). `/etc/hosts` dibaca lebih dulu daripada mDNS (`nsswitch: files mdns4_minimal`), jadi baris
+itu aman walau Avahi aktif.
 
 ### Auto-start (systemd user service)
 
@@ -269,6 +278,8 @@ Polanya ada di `server/policy.ts` sebagai tabel data, dan `bun run check:policy`
 
 Agen yang berhenti menunggu keputusan tidak lagi terlewat. Di **Pengaturan** Anda menyalakan izin notifikasi dan memilih pemicunya: kartu persetujuan, agen bertanya, tugas selesai & perlu dibaca, dan tugas gagal. Bawaannya notifikasi hanya muncul saat tab AI Team **tidak aktif** — saat tabnya terbuka, kartunya sudah terlihat sendiri.
 
+Notifikasi hanya jalan di alamat aman: `http://ai-team.localhost`, `http://localhost:4320`, atau HTTPS. Di `http://ai-team.local` browser memblokirnya, dan Pengaturan menampilkan tautan ke alamat yang aman.
+
 Jumlah tugas yang menunggu keputusan selalu tampil di judul tab, mis. `(2) AI Team`. Notifikasi berlaku lintas tugas, jadi tetap muncul walau Anda sedang membuka tugas lain atau halaman Pengaturan. Stop yang Anda tekan sendiri tidak memunculkan notifikasi (tugasnya jadi *perlu dibaca*, bukan *gagal*).
 
 Semua pembaruan live — thread, status, tab Live, laporan, rekap project, panel Tanya, dan notifikasi — lewat **satu WebSocket per tab** (`/api/ws`), tanpa polling. Kalau sambungannya putus (mis. server di-restart), penanda *terputus* menyala, lalu tab menyambung sendiri dan server mengirim ulang event yang terlewat.
@@ -414,7 +425,7 @@ Kalau server tidak bisa dihubungi, hook menolak.
 | `IDLE_SHUTDOWN_MS` | Kapan subprocess tugas yang menganggur ditutup (default 10 menit). |
 | `STOP_GRACE_MS` | Batas tunggu turn yang dihentikan dengan Stop (default 20 detik); lewat dari itu proses agen (Claude atau `agy`) ditutup paksa (sesinya tetap bisa dilanjutkan). |
 | `ASK_TIMEOUT_MS` | Batas waktu satu jawaban panel Tanya (default 5 menit). |
-| `ALLOWED_HOSTS` / `ALLOWED_ORIGINS` | Host/Origin tambahan yang boleh membuka API dan WebSocket, dipisah koma. Bawaan: `127.0.0.1`, `localhost`, `::1`, plus `ai-team.local` kalau `/etc/hosts` mengarahkannya ke `127.0.0.1` (dicek ulang tiap 30 detik). Permintaan dari situs lain ditolak `403` (anti CSRF dan DNS rebinding). |
+| `ALLOWED_HOSTS` / `ALLOWED_ORIGINS` | Host/Origin tambahan yang boleh membuka API dan WebSocket, dipisah koma. Bawaan: `127.0.0.1`, `localhost`, `::1`, `ai-team.localhost`, plus `ai-team.local` kalau `/etc/hosts` mengarahkannya ke `127.0.0.1` (dicek ulang tiap 30 detik). Permintaan dari situs lain ditolak `403` (anti CSRF dan DNS rebinding). |
 | `INCLUDE_USER_SETTINGS` | `1` untuk ikut memuat setelan "user" Claude Code — sekarang dari folder akun app (`data/accounts/claude/`), bukan `~/.claude`. |
 | `AGY_BIN` | Perintah Antigravity CLI (default `agy` dari `PATH`). |
 | `AGY_DIR` | Folder data dan keyring `agy` milik AI Team (default `data/accounts/gemini`). |

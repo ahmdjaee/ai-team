@@ -6,16 +6,36 @@ export type { AttentionEvent, NotificationSettings };
 
 const BASE_TITLE = "AI Team";
 
-export function permissionState(): NotificationPermission | "unsupported" {
+/**
+ * `insecure` = halaman bukan secure context (mis. `http://ai-team.local`). Browser lalu menolak Notification API
+ * tanpa pernah bertanya, dan setelan situs pun tidak bisa mengubahnya. Satu-satunya jalan adalah pindah alamat.
+ */
+export type PermissionView = NotificationPermission | "unsupported" | "insecure";
+
+export function permissionState(): PermissionView {
+  if (!window.isSecureContext) return "insecure";
   if (typeof Notification === "undefined") return "unsupported";
   return Notification.permission;
 }
 
 /** Harus dipanggil dari gestur pengguna (tombol di Pengaturan). */
-export async function requestPermission(): Promise<NotificationPermission | "unsupported"> {
-  if (typeof Notification === "undefined") return "unsupported";
-  if (Notification.permission !== "default") return Notification.permission;
+export async function requestPermission(): Promise<PermissionView> {
+  const state = permissionState();
+  if (state !== "default") return state;
   return await Notification.requestPermission();
+}
+
+/**
+ * Alamat aman untuk halaman yang sama: alias `ai-team.localhost` lewat nginx, atau server app langsung.
+ * Lewat nginx (port kosong), port app tidak terlihat dari sini, jadi dipakai port bawaan 4320.
+ */
+export function secureAddresses(): Array<{ label: string; href: string }> {
+  const port = location.port || "4320";
+  const path = `${location.pathname}${location.search}`;
+  return [
+    { label: "ai-team.localhost", href: `http://ai-team.localhost${path}` },
+    { label: `localhost:${port}`, href: `http://localhost:${port}${path}` },
+  ];
 }
 
 type GlobalEvent = { type: "attention"; attention: AttentionEvent } | { type: "tasks_changed" };

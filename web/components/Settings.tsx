@@ -4,7 +4,7 @@ import type { SettingsPatch } from "../../server/settings.ts";
 import { useEngines } from "../accounts.ts";
 import { AccountsSection } from "./AccountsSection.tsx";
 import { BotSettings } from "./BotSettings.tsx";
-import { permissionState, requestPermission } from "../notifications.ts";
+import { permissionState, requestPermission, secureAddresses } from "../notifications.ts";
 
 const NOTIF_LABEL: Array<[keyof SettingsView["notifications"], string]> = [
   ["approval", "Kartu persetujuan muncul"],
@@ -65,15 +65,40 @@ export function Settings({
             <span className="rounded bg-tag-green px-2 py-0.5 text-[11px] text-tag-green-ink">izin diberikan</span>
           ) : permission === "unsupported" ? (
             <span className="rounded bg-tag-gray px-2 py-0.5 text-[11px] text-tag-gray-ink">tidak didukung browser</span>
+          ) : permission === "insecure" ? (
+            <span className="rounded bg-tag-gray px-2 py-0.5 text-[11px] text-tag-gray-ink">butuh alamat aman</span>
+          ) : permission === "denied" ? (
+            <span className="rounded bg-tag-gray px-2 py-0.5 text-[11px] text-tag-gray-ink">diblokir di browser</span>
           ) : (
             <button
               onClick={async () => setPermission(await requestPermission())}
               className="rounded-lg bg-accent px-2.5 py-1 text-xs font-medium text-on-accent hover:bg-accent-hover"
             >
-              {permission === "denied" ? "Izin ditolak — buka setelan situs" : "Izinkan notifikasi"}
+              Izinkan notifikasi
             </button>
           )}
         </div>
+        {permission === "insecure" && (
+          <p className="mt-2 text-xs text-muted">
+            Browser memblokir notifikasi di <span className="font-mono">{location.host}</span> karena alamat ini bukan
+            HTTPS atau localhost. Buka AI Team lewat{" "}
+            {secureAddresses().map((address, index) => (
+              <span key={address.href}>
+                {index > 0 && " atau "}
+                <a href={address.href} className="font-mono text-accent hover:underline">
+                  {address.label}
+                </a>
+              </span>
+            ))}
+            , lalu izinkan notifikasi di sana.
+          </p>
+        )}
+        {permission === "denied" && (
+          <p className="mt-2 text-xs text-muted">
+            Izin notifikasi untuk situs ini pernah ditolak, dan browser tidak akan bertanya lagi. Klik ikon di kiri
+            address bar, ubah Notifikasi menjadi Izinkan, lalu muat ulang halaman.
+          </p>
+        )}
 
         <div className="mt-3 space-y-1.5">
           {NOTIF_LABEL.map(([key, label]) => (

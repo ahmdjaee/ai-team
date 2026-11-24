@@ -69,7 +69,7 @@ export const CONFIG = {
   /** TITLES=0 mematikan judul otomatis; judul sementara dari pesan pertama tetap dipakai. */
   autoTitles: str("TITLES", "1") !== "0",
   includeUserSettings: str("INCLUDE_USER_SETTINGS", "0") === "1",
-  /** Nama host tambahan yang boleh membuka UI/API (dipisah koma); bawaan: 127.0.0.1, localhost, ::1, ai-team.local. */
+  /** Nama host tambahan yang boleh membuka UI/API (dipisah koma); bawaan: 127.0.0.1, localhost, ::1, ai-team.localhost, ai-team.local. */
   allowedHosts: str("ALLOWED_HOSTS", ""),
   /** Origin tambahan yang boleh memanggil API dan WebSocket (dipisah koma), mis. https://ai-team.example. */
   allowedOrigins: str("ALLOWED_ORIGINS", ""),

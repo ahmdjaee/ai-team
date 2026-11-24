@@ -22,7 +22,7 @@ const { bus } = await import("../server/agent/bus.ts");
 const { live } = await import("../server/browser/live.ts");
 const { appendInbox, upsertFinding } = await import("../server/findings.ts");
 const { attachRealtime } = await import("../server/realtime.ts");
-const { LOCAL_ALIAS, allowedHost, allowedOrigin, hostsMapsToLoopback, rejectReason } = await import("../server/http-guard.ts");
+const { LOCAL_ALIAS, SECURE_ALIAS, allowedHost, allowedOrigin, hostsMapsToLoopback, rejectReason } = await import("../server/http-guard.ts");
 
 let failed = 0;
 function check(name: string, ok: boolean, detail?: unknown): void {
@@ -51,6 +51,15 @@ check(
     allowedHost(LOCAL_ALIAS) === mapped && allowedOrigin(`http://${LOCAL_ALIAS}`) === mapped,
   );
 }
+check(
+  "ai-team.localhost selalu dipercaya (secure context; browser memetakannya ke loopback sendiri)",
+  allowedHost(SECURE_ALIAS) &&
+    allowedHost(`${SECURE_ALIAS}:4320`) &&
+    allowedOrigin(`http://${SECURE_ALIAS}`) &&
+    allowedOrigin(`http://${SECURE_ALIAS}:4320`) &&
+    !allowedHost(`x.${SECURE_ALIAS}`) &&
+    !allowedOrigin(`http://${SECURE_ALIAS}:3000`),
+);
 check("Host asing ditolak (DNS rebinding)", !allowedHost("evil.example:4320") && !allowedHost("127.0.0.1.evil.example"));
 check(
   "Origin aplikasi diizinkan",
