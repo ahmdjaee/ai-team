@@ -1,5 +1,6 @@
 import type { AttentionEvent } from "../server/types.ts";
 import type { NotificationSettings } from "../server/settings.ts";
+import { isDesktop, notifyNative } from "./desktop.ts";
 import { subscribe } from "./realtime.ts";
 
 export type { AttentionEvent, NotificationSettings };
@@ -13,6 +14,8 @@ const BASE_TITLE = "AI Team";
 export type PermissionView = NotificationPermission | "unsupported" | "insecure";
 
 export function permissionState(): PermissionView {
+  // Di aplikasi desktop notifikasi dikirim jendela aplikasinya, tanpa izin per situs.
+  if (isDesktop) return "granted";
   if (!window.isSecureContext) return "insecure";
   if (typeof Notification === "undefined") return "unsupported";
   return Notification.permission;
@@ -72,7 +75,14 @@ export function maybeNotify(
   onClick: (taskId: string) => void,
 ): void {
   if (event.silent || !enabledFor(event.kind, settings)) return;
-  if (settings.onlyWhenHidden && !document.hidden) return;
+  // "Tidak sedang dilihat" = tab tersembunyi ATAU jendelanya tidak fokus. `document.hidden` saja tidak cukup:
+  // di Linux tab aktif di jendela yang tertutup jendela lain (mis. jendela desktop AI Team) tetap "terlihat".
+  if (settings.onlyWhenHidden && !document.hidden && document.hasFocus()) return;
+  if (isDesktop) {
+    // Notifikasi desktop Linux tidak punya aksi klik yang bisa diandalkan; jendela dibuka lewat tray.
+    notifyNative(`${event.taskId} · ${event.title}`, event.detail ?? "");
+    return;
+  }
   if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
 
   const notification = new Notification(`${event.taskId} · ${event.title}`, {

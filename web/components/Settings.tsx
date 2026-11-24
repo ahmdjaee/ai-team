@@ -4,6 +4,7 @@ import type { SettingsPatch } from "../../server/settings.ts";
 import { useEngines } from "../accounts.ts";
 import { AccountsSection } from "./AccountsSection.tsx";
 import { BotSettings } from "./BotSettings.tsx";
+import { isDesktop } from "../desktop.ts";
 import { permissionState, requestPermission, secureAddresses } from "../notifications.ts";
 
 const NOTIF_LABEL: Array<[keyof SettingsView["notifications"], string]> = [
@@ -60,7 +61,7 @@ export function Settings({
 
       <section className="mt-7">
         <div className="flex items-center gap-3">
-          <h3 className="text-xs uppercase tracking-wide text-muted">Notifikasi browser</h3>
+          <h3 className="text-xs uppercase tracking-wide text-muted">{isDesktop ? "Notifikasi desktop" : "Notifikasi browser"}</h3>
           {permission === "granted" ? (
             <span className="rounded bg-tag-green px-2 py-0.5 text-[11px] text-tag-green-ink">izin diberikan</span>
           ) : permission === "unsupported" ? (
@@ -121,7 +122,7 @@ export function Settings({
                 void save({ notifications: { ...settings.notifications, onlyWhenHidden: e.target.checked } })
               }
             />
-            Hanya saat tab tidak aktif
+            Hanya saat AI Team tidak sedang dilihat
           </label>
         </div>
         <p className="mt-2 text-xs text-faint">

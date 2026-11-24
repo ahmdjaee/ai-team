@@ -328,8 +328,11 @@ tasksRouter.get("/tasks/:id/live", (req, res) => {
     return;
   }
 
+  // `?raw=1`: isi yang sama persis, tetapi tanpa tipe multipart. Dipakai aplikasi desktop, yang
+  // membaca aliran ini lewat fetch (web/lib/mjpeg.ts): WebKit memutus fetch ke respons multipart.
+  const type = req.query.raw === "1" ? "application/octet-stream" : "multipart/x-mixed-replace";
   res.writeHead(200, {
-    "Content-Type": `multipart/x-mixed-replace; boundary=${BOUNDARY}`,
+    "Content-Type": `${type}; boundary=${BOUNDARY}`,
     "Cache-Control": "no-store, no-transform",
     Pragma: "no-cache",
     Connection: "keep-alive",

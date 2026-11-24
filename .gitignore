@@ -14,3 +14,8 @@ workspace/
 .env
 
 *.log
+
+# aplikasi desktop: hasil kompilasi Rust (termasuk cache cargo Docker), skema Tauri, sisa stage lama
+src-tauri/target/
+src-tauri/gen/
+src-tauri/stage/

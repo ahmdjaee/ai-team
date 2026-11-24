@@ -31,13 +31,19 @@
     "check:acp": "bun scripts/check-acp.ts",
     "check:accounts": "bun scripts/check-accounts.ts",
     "check:usage": "bun scripts/check-usage.ts",
+    "check:mjpeg": "bun scripts/check-mjpeg.ts",
     "check:mcp-http": "bun scripts/check-mcp-http.ts",
     "fix:costs": "bun scripts/fix-costs.ts",
     "gate:suggest": "bun scripts/gates/suggest-collapse.ts",
     "gate:recap": "bun scripts/gates/project-recap.ts",
     "gate:register": "bun scripts/gates/project-register.ts",
     "gate:report": "bun scripts/gates/report-sections.ts",
-    "gate:task-report": "bun scripts/gates/task-report.ts"
+    "gate:task-report": "bun scripts/gates/task-report.ts",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:docker:check": "bun scripts/desktop-docker.ts check",
+    "desktop:docker:dev": "bun scripts/desktop-docker.ts dev",
+    "desktop:docker:build": "bun scripts/desktop-docker.ts build"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "2.4.0",
@@ -55,6 +61,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
+    "@tauri-apps/cli": "2.12.4",
     "@types/express": "5.0.6",
     "@types/markdown-it": "14.2.0",
     "@types/node": "26.6.5",

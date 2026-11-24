@@ -97,6 +97,47 @@ otomatis saat start berikutnya. Kalau ingin hidup sejak boot tanpa login: `login
 — unit-nya tidak perlu diubah. Server berjalan di Bun (`~/.bun/bin/bun`); setelah `bun upgrade`, cukup
 `systemctl --user restart ai-team`.
 
+## Aplikasi desktop (Linux)
+
+AI Team juga bisa dibuka sebagai aplikasi desktop: jendela native dengan ikon tray, yang ditulis dengan Rust
+([Tauri v2](https://v2.tauri.app), kodenya di `src-tauri/`). Aplikasinya **jendela tipis**: ia tidak menjalankan
+server sendiri, tetapi membuka layanan yang sudah berjalan di atas (`http://127.0.0.1:4320`). Jadi data, akun AI,
+dan tugasnya sama persis dengan versi web, dan perubahan UI tetap dirilis dengan `bun run build` + restart layanan.
+
+Build lewat Docker. Selain Docker tidak ada yang perlu dipasang: Rust dan pustaka dev Tauri ada di dalam image
+(`src-tauri/Dockerfile`, Ubuntu 22.04). Hanya proses build yang berjalan di kontainer; aplikasinya berjalan langsung
+di desktop memakai WebKitGTK sistem.
+
+```bash
+bun run desktop:docker:check   # cargo check + clippy
+bun run desktop:docker:dev     # build debug, lalu buka jendelanya
+bun run desktop:docker:build   # paket .deb di src-tauri/target/release/bundle/deb/
+sudo apt install ./src-tauri/target/release/bundle/deb/AI\ Team_*_amd64.deb   # menu aplikasi: "AI Team"
+```
+
+Build pertama membuat image (~2,5 GB) dan mengompilasi semua crate, jadi butuh beberapa menit; build berikutnya
+inkremental. Cache cargo kontainer disimpan di `src-tauri/target/docker-home/`. Dengan Rust di mesin sendiri:
+`bun run desktop:dev` / `bun run desktop:build`.
+
+- **Layanan belum jalan?** Jendela menampilkan halaman "Belum tersambung" dengan tombol **Jalankan layanan**
+  (`systemctl --user start ai-team`) dan **Coba lagi**. Halaman itu juga memeriksa ulang sendiri tiap beberapa
+  detik, lalu pindah ke UI begitu layanan menjawab.
+- **Alamat lain**: env `AI_TEAM_URL`, mis. `AI_TEAM_URL=http://ai-team.localhost ai-team`. Hanya `http://` ke
+  `127.0.0.1`, `localhost`, atau `ai-team.localhost` yang diterima; nilai lain diabaikan dan halaman splash
+  menampilkan alasannya.
+- **Menutup jendela tidak menutup aplikasi.** Jendelanya disembunyikan ke tray supaya notifikasi tetap muncul.
+  Menu tray: **Buka AI Team**, **Muat ulang** (kembali ke halaman yang sama setelah tersambung lagi), dan
+  **Keluar**. Membuka aplikasi lagi memunculkan jendela yang sama, jadi desktop tanpa tray (GNOME tanpa
+  ekstensi AppIndicator) tetap bisa memakainya. Layanan AI Team sendiri tidak pernah ikut berhenti.
+- **Notifikasi** dikirim sebagai notifikasi desktop, tanpa izin per situs. Pengaturan menampilkannya sebagai
+  "Notifikasi desktop". Badge `(2) AI Team` ikut tampil di judul jendela.
+- **Tautan** ke situs lain dan tautan `target="_blank"` (lampiran, bukti, halaman login akun AI) dibuka di
+  browser sistem. Unduhan masuk ke folder Unduhan.
+- **Tab Live** membaca aliran yang sama lewat `fetch` (`web/lib/mjpeg.ts`, endpoint `…/live?raw=1`), bukan
+  `<img>`. WebKitGTK menampilkan MJPEG di `<img>`, tetapi tidak pernah menutup sambungannya, sehingga screencast
+  bot tidak akan berhenti. Pemisah frame-nya diuji `bun run check:mjpeg`.
+- Paket dari `desktop:docker:build` dibangun di Ubuntu 22.04, jadi jalan di 22.04 dan rilis sesudahnya.
+
 ## Akun AI
 
 **Pengaturan → Akun AI** memuat satu kartu per penyedia (satu akun per penyedia):
@@ -276,7 +317,7 @@ Polanya ada di `server/policy.ts` sebagai tabel data, dan `bun run check:policy`
 
 ## Notifikasi browser
 
-Agen yang berhenti menunggu keputusan tidak lagi terlewat. Di **Pengaturan** Anda menyalakan izin notifikasi dan memilih pemicunya: kartu persetujuan, agen bertanya, tugas selesai & perlu dibaca, dan tugas gagal. Bawaannya notifikasi hanya muncul saat tab AI Team **tidak aktif** — saat tabnya terbuka, kartunya sudah terlihat sendiri.
+Agen yang berhenti menunggu keputusan tidak lagi terlewat. Di **Pengaturan** Anda menyalakan izin notifikasi dan memilih pemicunya: kartu persetujuan, agen bertanya, tugas selesai & perlu dibaca, dan tugas gagal. Bawaannya notifikasi hanya muncul saat AI Team **tidak sedang dilihat**: tabnya tersembunyi, atau jendelanya tidak fokus (mis. tertutup jendela lain). Saat Anda sedang melihatnya, kartunya sudah terlihat sendiri.
 
 Notifikasi hanya jalan di alamat aman: `http://ai-team.localhost`, `http://localhost:4320`, atau HTTPS. Di `http://ai-team.local` browser memblokirnya, dan Pengaturan menampilkan tautan ke alamat yang aman.
 

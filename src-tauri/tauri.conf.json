@@ -1,0 +1,25 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AI Team",
+  "mainBinaryName": "ai-team",
+  "version": "0.1.0",
+  "identifier": "dev.aiteam.app",
+  "build": {
+    "frontendDist": "./splash"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb"],
+    "category": "DeveloperTool",
+    "shortDescription": "Jendela desktop AI Team",
+    "longDescription": "Membuka layanan AI Team yang berjalan di komputer ini (bawaan http://127.0.0.1:4320) dalam jendela sendiri, dengan ikon tray dan notifikasi desktop.",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"]
+  }
+}

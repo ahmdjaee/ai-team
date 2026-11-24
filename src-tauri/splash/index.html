@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Team</title>
+    <!--
+      Splash aplikasi desktop. Tampil saat jendela menyambung ke layanan AI Team, dan saat layanan itu
+      belum berjalan. Statusnya dibaca dari shell (src-tauri/src/link.rs); begitu layanan menjawab,
+      shell sendiri yang memindahkan jendela ke UI.
+    -->
+    <style>
+      :root {
+        --page: #ffffff;
+        --panel: #f7f7f5;
+        --line: #e9e9e7;
+        --line-strong: #dcdcd9;
+        --ink: #37352f;
+        --muted: #787774;
+        --accent: #2383e2;
+        --accent-hover: #0b6bcb;
+        --on-accent: #ffffff;
+        --danger: #c4554d;
+        color-scheme: light;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --page: #191919;
+          --panel: #202020;
+          --line: #2f2f2f;
+          --line-strong: #3f3f3f;
+          --ink: #e4e4e2;
+          --muted: #9b9b99;
+          --accent: #3d9df3;
+          --accent-hover: #5aadf6;
+          --on-accent: #0b1b2b;
+          --danger: #ff8a80;
+          color-scheme: dark;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: var(--page);
+        color: var(--ink);
+        font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+      }
+      main {
+        width: min(440px, 100%);
+      }
+      h1 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 12px;
+        color: var(--muted);
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        flex: none;
+        border-radius: 50%;
+        background: var(--accent);
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      body[data-phase="offline"] .dot {
+        background: var(--danger);
+        animation: none;
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.3;
+        }
+      }
+      code {
+        font: 12px/1.4 ui-monospace, "SFMono-Regular", Menlo, monospace;
+      }
+      .card {
+        margin-top: 16px;
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+      }
+      .card p {
+        margin: 0;
+      }
+      .card p + p {
+        margin-top: 8px;
+      }
+      .detail {
+        color: var(--muted);
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      #start-result {
+        margin-top: 10px;
+      }
+      .warning {
+        margin-top: 12px;
+        color: var(--danger);
+        font-size: 12px;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      button {
+        padding: 6px 12px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--ink);
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover {
+        background: var(--line);
+      }
+      button.primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: var(--on-accent);
+        font-weight: 500;
+      }
+      button.primary:hover {
+        background: var(--accent-hover);
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body data-phase="connecting">
+    <main>
+      <h1>AI Team</h1>
+      <div class="status" role="status" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="headline">Menyambungkan ke layanan…</span>
+      </div>
+
+      <section id="offline" class="card" hidden>
+        <p>
+          Layanan AI Team belum berjalan di <code id="url"></code>. Aplikasi ini hanya membuka layanan itu, jadi
+          jalankan dulu layanannya; jendela ini tersambung sendiri begitu layanan menjawab.
+        </p>
+        <p class="detail" id="detail"></p>
+        <p class="detail">Di terminal: <code>systemctl --user start ai-team</code>, atau <code>bun run start</code> dari folder repo.</p>
+        <div class="actions">
+          <button type="button" class="primary" id="start">Jalankan layanan</button>
+          <button type="button" id="retry">Coba lagi</button>
+        </div>
+        <p class="detail" id="start-result" hidden></p>
+      </section>
+
+      <p class="warning" id="warning" hidden></p>
+    </main>
+
+    <script>
+      const invoke = window.__TAURI__?.core?.invoke;
+      const $ = (id) => document.getElementById(id);
+
+      function render(status) {
+        document.body.dataset.phase = status.phase;
+        const offline = status.phase === "offline";
+        $("headline").textContent = offline ? "Belum tersambung" : "Menyambungkan ke layanan…";
+        $("offline").hidden = !offline;
+        $("url").textContent = status.url;
+        $("detail").textContent = status.detail;
+        $("warning").textContent = status.warning;
+        $("warning").hidden = !status.warning;
+      }
+
+      async function poll() {
+        try {
+          render(await invoke("status"));
+        } catch (error) {
+          console.warn("status gagal", error);
+        }
+        setTimeout(poll, 600);
+      }
+
+      $("retry").addEventListener("click", () => {
+        $("start-result").hidden = true;
+        void invoke("retry");
+      });
+
+      $("start").addEventListener("click", async () => {
+        const button = $("start");
+        const result = $("start-result");
+        button.disabled = true;
+        button.textContent = "Menjalankan…";
+        result.hidden = true;
+        try {
+          await invoke("start_service");
+        } catch (error) {
+          result.textContent = `Gagal menjalankan layanan: ${error}`;
+          result.hidden = false;
+        } finally {
+          button.disabled = false;
+          button.textContent = "Jalankan layanan";
+        }
+      });
+
+      if (invoke) void poll();
+      else $("headline").textContent = "Halaman ini hanya berjalan di dalam aplikasi desktop AI Team.";
+    </script>
+  </body>
+</html>

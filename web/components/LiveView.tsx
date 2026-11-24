@@ -1,5 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { LiveState, StoredEvent } from "../api.ts";
+import { isDesktop } from "../desktop.ts";
+import { playMjpeg } from "../lib/mjpeg.ts";
 import { requestControl } from "../realtime.ts";
 import { LiveControl } from "./LiveControl.tsx";
 import { LiveOverlay } from "./LiveOverlay.tsx";
@@ -29,8 +31,9 @@ function useDocumentHidden(): boolean {
 
 /**
  * Tab Live. Keadaannya (`live`) didorong server lewat WebSocket — tidak ada polling. Gambarnya
- * aliran MJPEG biasa di <img> (hingga 60 fps), diputus saat tab browser disembunyikan supaya server
- * tidak terus mengirim frame; tanpa penonton screencast di Chromium berhenti sendiri.
+ * aliran MJPEG biasa di <img> (hingga 60 fps; di aplikasi desktop dibaca lewat fetch, lihat
+ * lib/mjpeg.ts), diputus saat tab browser disembunyikan supaya server tidak terus mengirim frame;
+ * tanpa penonton screencast di Chromium berhenti sendiri.
  */
 export const LiveView = memo(function LiveView({
   taskId,
@@ -81,14 +84,23 @@ export const LiveView = memo(function LiveView({
     else setMine(action === "take");
   };
 
-  // Chrome tidak selalu memutus aliran multipart saat <img> dilepas dari DOM; src kosong memaksanya.
+  const streamUrl = `/api/tasks/${encodeURIComponent(taskId)}/live?t=${streamKey}`;
   const image = useRef<HTMLImageElement>(null);
   useEffect(() => {
     const element = image.current;
+    if (isDesktop) {
+      // WebKitGTK tidak pernah menutup aliran multipart di <img>; di aplikasi desktop alirannya
+      // dibaca lewat fetch supaya bisa diputus dengan pasti.
+      if (!element || !connected) return;
+      const abort = new AbortController();
+      void playMjpeg(`${streamUrl}&raw=1`, element, abort.signal);
+      return () => abort.abort();
+    }
+    // Chrome tidak selalu memutus aliran multipart saat <img> dilepas dari DOM; src kosong memaksanya.
     return () => {
       if (element) element.src = "";
     };
-  }, [streamKey, connected]);
+  }, [streamUrl, connected]);
 
   return (
     <div className="flex h-full flex-col px-6 py-5">
@@ -122,7 +134,7 @@ export const LiveView = memo(function LiveView({
               {controlling ? "Serahkan ke bot" : "Ambil alih"}
             </button>
           )}
-          {showStream && (
+          {showStream && !isDesktop && (
             <a
               href={`/api/tasks/${encodeURIComponent(taskId)}/live`}
               target="_blank"
@@ -156,7 +168,7 @@ export const LiveView = memo(function LiveView({
               <img
                 ref={image}
                 key={streamKey}
-                src={`/api/tasks/${encodeURIComponent(taskId)}/live?t=${streamKey}`}
+                src={isDesktop ? undefined : streamUrl}
                 alt="Tampilan browser bot secara langsung"
                 className="h-full w-full object-contain"
               />
