@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { createSdkMcpServer, query, tool, type CanUseTool, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { notifyProject } from "../changes.ts";
-import { claudeEnv, pickEngine } from "../accounts/index.ts";
+import { claudeEnv, claudeSettings, pickEngine } from "../accounts/index.ts";
 import { CONFIG } from "../config.ts";
 import { AgyChat, type ChatOptions } from "../engines/antigravity/chat.ts";
 import { effortFor, getSettings, modelFor } from "../settings.ts";
@@ -358,7 +358,7 @@ function options(projectId: string, abort: AbortController): Options {
     cwd: workspaceForProject(projectId),
     additionalDirectories: [CONFIG.tasksDir, projectDir(projectId)],
     settingSources: [],
-    settings: { permissions: { allow: [...READ_TOOLS, "mcp__curator__*"], ask: [], deny: [...denied, ...DENY_ALWAYS] } },
+    settings: { ...claudeSettings(), permissions: { allow: [...READ_TOOLS, "mcp__curator__*"], ask: [], deny: [...denied, ...DENY_ALWAYS] } },
     allowedTools: [...READ_TOOLS, "mcp__curator__*"],
     disallowedTools: [...denied, ...ARTIFACT_TOOLS],
     permissionMode: "default",

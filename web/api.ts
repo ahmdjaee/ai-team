@@ -1,10 +1,12 @@
 import type {
   AccountView,
   AttentionEvent,
+  ClaudeSource,
   AutonomyMode,
   ContextUsage,
   Effort,
   EngineId,
+  GatewayView,
   ModelOption,
   ProviderId,
   RoleId,
@@ -30,7 +32,8 @@ import type {
 
 export type { AskDefaults, AskMessage, Assignment, AttentionEvent, AutonomyMode, ContextUsage, EngineId, Project, RoleId, Review, Settings, StoredEvent, Task, TaskStatus, TaskSummary, UiEvent, WorkerStatus };
 
-export type { AccountView, Effort, ModelDefaults, ModelKey, ModelOption, ProviderId };
+export type { AccountView, ClaudeSource, Effort, GatewayView, ModelDefaults, ModelKey, ModelOption, ProviderId };
+export type { AgentUsage, UsageWindow } from "../server/accounts/usage.ts";
 
 /** Pengaturan dari server plus nilai `.env` yang berlaku kalau model/penalaran dikosongkan. */
 export type SettingsView = Settings & { defaults: ModelDefaults };
@@ -312,6 +315,9 @@ export const api = {
     request<SettingsView>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
 
   accounts: () => request<{ accounts: AccountView[] }>("/api/accounts"),
+  /** Pemakaian satu agen; `force` = baca ulang tanpa cache server. */
+  accountsUsage: (provider: ProviderId, force?: boolean) =>
+    request<{ usage: import("../server/accounts/usage.ts").AgentUsage[] }>(`/api/accounts/usage?provider=${provider}${force ? "&force=1" : ""}`),
   startLogin: (provider: ProviderId) =>
     request<{ account: AccountView }>(`/api/accounts/${provider}/login`, { method: "POST" }),
   submitLoginCode: (provider: ProviderId, code: string) =>
@@ -320,6 +326,14 @@ export const api = {
   closeLogin: (provider: ProviderId) => request<{ account: AccountView }>(`/api/accounts/${provider}/login`, { method: "DELETE" }),
   checkAccount: (provider: ProviderId) => request<{ account: AccountView }>(`/api/accounts/${provider}/check`, { method: "POST" }),
   logoutAccount: (provider: ProviderId) => request<{ account: AccountView }>(`/api/accounts/${provider}/logout`, { method: "POST" }),
+  /** Tambah/ubah gateway Claude; server mengujinya ke `/v1/models` dulu. Token kosong saat mengubah = token lama. */
+  saveGateway: (input: { baseUrl: string; token?: string; activate?: boolean }) =>
+    request<{ account: AccountView }>("/api/accounts/claude/gateway", { method: "PUT", body: JSON.stringify(input) }),
+  checkGateway: () => request<{ account: AccountView }>("/api/accounts/claude/gateway/check", { method: "POST" }),
+  removeGateway: () => request<{ account: AccountView }>("/api/accounts/claude/gateway", { method: "DELETE" }),
+  /** Akun yang dipakai bot Claude: login claude.ai atau gateway. */
+  setClaudeSource: (source: ClaudeSource) =>
+    request<{ account: AccountView }>("/api/accounts/claude/source", { method: "POST", body: JSON.stringify({ source }) }),
 
   projects: () => request<{ projects: ProjectInfo[] }>("/api/projects"),
   project: (id: string) => request<ProjectDetail>(`/api/projects/${encodeURIComponent(id)}`),

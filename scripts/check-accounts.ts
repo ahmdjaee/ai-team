@@ -1,10 +1,12 @@
 /**
  * Uji akun AI milik app di AI Team: env Claude, mesin mengikuti akun, pagar scheduler, salinan
- * transkrip sesi dari ~/.claude, folder rahasia terlindung, dan adaptor Express rute akun.
+ * transkrip sesi dari ~/.claude, folder rahasia terlindung, adaptor Express rute akun, dan gateway Claude
+ * (base URL + token, dengan gateway palsu lokal).
  * Alur login, store, dan provider diuji di library ai-agent-auth (`bun test` di sana).
  * Deterministik, tanpa model, tanpa `claude`/`agy` sungguhan: bun run check:accounts
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -22,7 +24,7 @@ const { CONFIG } = await import("../server/config.ts");
 const { migrateClaudeSessions } = await import("../server/accounts/claude.ts");
 const { resolveClaudeBin } = await import("ai-agent-auth/claude");
 const accounts = await import("../server/accounts/index.ts");
-const { auth, claudeEnv } = accounts;
+const { auth, claudeEnv, claudeSettings } = accounts;
 const store = auth.store;
 const { protectedDirs } = await import("../server/protected.ts");
 const { createTask, patchAssignment, getTask, updateTask } = await import("../server/tasks.ts");
@@ -37,6 +39,18 @@ function check(name: string, ok: boolean, detail?: unknown): void {
   if (!ok) failed += 1;
   console.log(`${ok ? "ok  " : "GAGAL"} ${name}${!ok && detail !== undefined ? ` — ${JSON.stringify(detail).slice(0, 400)}` : ""}`);
 }
+
+/** Jalankan `apiKeyHelper` sesi Claude seperti CLI menjalankannya (lewat /bin/sh); undefined = tidak ada helper. */
+function helperRun(): { status: number | null; stdout: string; stderr: string } | undefined {
+  const command = claudeSettings().apiKeyHelper;
+  if (!command) return undefined;
+  const run = spawnSync("/bin/sh", ["-c", command], { encoding: "utf8" });
+  return { status: run.status, stdout: run.stdout, stderr: run.stderr };
+}
+const helperToken = (): string | undefined => {
+  const run = helperRun();
+  return run?.status === 0 ? run.stdout : undefined;
+};
 
 // ---------- 1. env Claude ----------
 
@@ -191,6 +205,174 @@ const offChanges = accounts.onAccountsChanged(() => changes.push(Date.now()));
   const other = await call("GET", "/lain");
   check("K7 rute lain diteruskan ke app", other.status === 404 && other.body.error === "tidak ditemukan (app)", other);
   await new Promise((resolve) => server.close(resolve));
+}
+
+// ---------- 6. gateway Claude (base URL + token, seperti claude-gw) ----------
+
+{
+  const gw = await import("../server/accounts/gateway.ts");
+  const GOOD = "token-gateway-uji-1234567890";
+  let accepted = GOOD;
+  const fake = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req: Request) {
+      const url = new URL(req.url);
+      if (url.pathname !== "/v1/models") return Response.json({ error: "tidak ada" }, { status: 404 });
+      if (req.headers.get("authorization") !== `Bearer ${accepted}`) return Response.json({ error: "unauthorized" }, { status: 401 });
+      return Response.json({ data: [{ type: "model", id: "claude-opus-5", display_name: "Claude Opus 5" }, { id: "claude-haiku-5-5" }] });
+    },
+  });
+  const baseUrl = `http://127.0.0.1:${fake.port}`;
+  const claudeView = () => accounts.accountView("claude");
+
+  check("L1 tanpa gateway: claudeSource oauth, gateway kosong", claudeView().gateway === undefined && claudeView().claudeSource === "oauth", claudeView());
+
+  const wrong = await accounts.saveClaudeGateway({ baseUrl, token: "token-salah-000000000000" });
+  check("L2 token salah ditolak, tidak ada yang tersimpan", !wrong.ok && wrong.status === 400 && /ditolak/.test(wrong.error) && !existsSync(gw.gatewayFile()), wrong);
+  const scheme = await accounts.saveClaudeGateway({ baseUrl: "ftp://127.0.0.1", token: GOOD });
+  check("L3 base URL bukan http(s) ditolak", !scheme.ok && scheme.status === 400, scheme);
+  const normalized = gw.normalizeBaseUrl(`${baseUrl}/v1/`);
+  check("L4 base URL dinormalisasi tanpa /v1 dan garis miring", normalized.ok && normalized.url === baseUrl, normalized);
+  const unreachable = await gw.probeGateway("http://127.0.0.1:1", GOOD, 2_000);
+  check("L5 gateway tak terjangkau: galat jaringan, bukan token", !unreachable.ok && !unreachable.auth, unreachable);
+
+  const before = changes.length;
+  const saved = await accounts.saveClaudeGateway({ baseUrl: `${baseUrl}/`, token: GOOD, activate: false });
+  check("L6 token benar tersimpan", saved.ok && saved.created, saved);
+  check("L7 berkas gateway 0600 dan terlindung dari agen", (statSync(gw.gatewayFile()).mode & 0o077) === 0 && protectedDirs().some((dir) => gw.gatewayFile().startsWith(`${dir}${sep}`)));
+  check("L8 gateway pertama memicu salinan transkrip sesi", store.migrationDone("claude-sessions-from-home"));
+  check("L9 menyimpan memicu event accounts_changed", changes.length > before, changes.length - before);
+  const view = claudeView();
+  check(
+    "L10 view: host, petunjuk token, dan model tanpa token",
+    view.gateway?.state === "ok" && view.gateway.host === `127.0.0.1:${fake.port}` && view.gateway.tokenHint === "…7890" &&
+      view.gateway.models.map((model) => model.id).join() === "claude-opus-5,claude-haiku-5-5" && !JSON.stringify(view).includes(GOOD),
+    view,
+  );
+  check(
+    "L11 belum aktif: env Claude tanpa gateway, tanpa apiKeyHelper",
+    claudeEnv().ANTHROPIC_AUTH_TOKEN === undefined && claudeEnv().ANTHROPIC_BASE_URL === undefined && claudeSettings().apiKeyHelper === undefined,
+  );
+  check("L12 belum aktif: Claude tetap butuh login claude.ai", !accounts.engineUsable("claude").ok);
+
+  check("L13 jadikan gateway akun aktif", accounts.setClaudeSource("gateway") && claudeView().claudeSource === "gateway");
+  const env = claudeEnv();
+  check(
+    "L14 aktif: env berisi base URL saja, folder sesi sama",
+    env.ANTHROPIC_BASE_URL === baseUrl && env.CLAUDE_CONFIG_DIR === CONFIG.claudeDir,
+    { ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL, CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR },
+  );
+  // Token di env bocor ke Bash bot (printenv, /proc/<pid>/environ). Mode SCRUB, yang dulu menyembunyikannya,
+  // membuat stub .env.local 0 byte di workspace (MissingAppKeyException di EWS) dan menjebol argumen bwrap.
+  check(
+    "L14a aktif: token gateway dan SCRUB tidak pernah ada di env",
+    env.ANTHROPIC_AUTH_TOKEN === undefined && env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB === undefined && !Object.values(env).includes(GOOD),
+    Object.keys(env).filter((key) => /ANTHROPIC|SCRUB/.test(key)),
+  );
+  const helper = claudeSettings().apiKeyHelper ?? "";
+  check("L14b aktif: apiKeyHelper mencetak token gateway", helperToken() === GOOD, helperRun()?.stderr);
+  check("L14c perintah apiKeyHelper hanya memuat path, bukan token", helper !== "" && !helper.includes(GOOD) && helper.includes(gw.gatewayFile()), helper);
+  check("L15 aktif: API key dari shell tetap dibuang", env.ANTHROPIC_API_KEY === undefined && env.CLAUDE_CODE_OAUTH_TOKEN === undefined);
+  check("L16 env /usage claude.ai tidak pernah berisi token gateway", accounts.claudeOAuthEnv().ANTHROPIC_AUTH_TOKEN === undefined && accounts.claudeOAuthEnv().ANTHROPIC_BASE_URL === undefined);
+  check(
+    "L17 tanpa login claude.ai, Claude bisa dipakai lewat gateway",
+    accounts.engineUsable("claude").ok && accounts.usableEngines().join() === "claude" && accounts.engineAccount("claude").models.length === 2,
+    accounts.usableEngines(),
+  );
+
+  const edited = await accounts.saveClaudeGateway({ baseUrl, token: "" });
+  check("L18 ubah tanpa token: token lama dipakai, tetap aktif", edited.ok && !edited.created && helperToken() === GOOD && claudeView().claudeSource === "gateway", edited);
+
+  store.save("claude", { addedAt: new Date().toISOString(), email: "uji@example.com", status: "ok", checkedAt: new Date().toISOString() });
+  accounts.markAccountExpired("claude", "authentication_failed");
+  check("L19 galat login saat gateway aktif menandai gateway, bukan claude.ai", claudeView().gateway?.state === "expired" && store.get("claude")?.status === "ok", claudeView());
+  const blocked = accounts.engineUsable("claude");
+  check("L20 gateway kedaluwarsa memblokir dengan ajakan memperbarui token", !blocked.ok && /gateway/.test(blocked.reason ?? ""), blocked);
+  await accounts.checkAccount("claude", true);
+  check("L21 Periksa memulihkan gateway yang tokennya diterima", claudeView().gateway?.state === "ok", claudeView().gateway);
+  accepted = "token-baru-di-gateway-00000";
+  await gw.checkGateway(true);
+  check("L22 token diganti di gateway: pemeriksaan menandai expired", claudeView().gateway?.state === "expired" && /401/.test(claudeView().gateway?.reason ?? ""), claudeView().gateway);
+  accepted = GOOD;
+  await gw.checkGateway(true);
+
+  // adaptor Express: rute gateway sebelum rute library
+  const app = express();
+  app.use(express.json());
+  app.use("/api", accountsRouter);
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const api = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api`;
+  const call = async (method: string, path: string, body?: unknown) => {
+    const response = await fetch(`${api}${path}`, {
+      method,
+      headers: body === undefined ? {} : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await response.text();
+    return { status: response.status, text, body: JSON.parse(text) as { account?: { gateway?: unknown; claudeSource?: string }; error?: string; accounts?: unknown } };
+  };
+  const list = await call("GET", "/accounts");
+  check("M1 GET /accounts membawa gateway tanpa token", list.status === 200 && list.text.includes("tokenHint") && !list.text.includes(GOOD), list.status);
+  const bad = await call("PUT", "/accounts/claude/gateway", { baseUrl, token: "token-salah-000000000000" });
+  check("M2 PUT token salah → 400, gateway lama tetap", bad.status === 400 && helperToken() === GOOD, bad.body);
+  const put = await call("PUT", "/accounts/claude/gateway", { baseUrl, token: GOOD });
+  check("M3 PUT token benar → account tanpa token", put.status === 200 && Boolean(put.body.account?.gateway) && !put.text.includes(GOOD), put.status);
+  const bogus = await call("POST", "/accounts/claude/source", { source: "lain" });
+  check("M4 source tidak dikenal → 400", bogus.status === 400, bogus.body);
+  const oauth = await call("POST", "/accounts/claude/source", { source: "oauth" });
+  check(
+    "M5 source oauth → claude.ai dipakai, tanpa base URL dan apiKeyHelper gateway",
+    oauth.status === 200 && oauth.body.account?.claudeSource === "oauth" && claudeEnv().ANTHROPIC_BASE_URL === undefined && claudeSettings().apiKeyHelper === undefined,
+    oauth.body,
+  );
+  const checked = await call("POST", "/accounts/claude/gateway/check");
+  check("M6 periksa gateway → 200", checked.status === 200, checked.body);
+  await call("POST", "/accounts/claude/source", { source: "gateway" });
+  const removed = await call("DELETE", "/accounts/claude/gateway");
+  check(
+    "M7 hapus gateway aktif → kembali ke claude.ai, berkas hilang",
+    removed.status === 200 && removed.body.account?.gateway === undefined && removed.body.account?.claudeSource === "oauth" && !existsSync(gw.gatewayFile()) &&
+      claudeEnv().ANTHROPIC_BASE_URL === undefined && claudeSettings().apiKeyHelper === undefined,
+    removed.body,
+  );
+  const orphan = await call("POST", "/accounts/claude/source", { source: "gateway" });
+  check("M8 pilih gateway yang belum ada → 409", orphan.status === 409, orphan.body);
+  const missing = await call("POST", "/accounts/claude/gateway/check");
+  check("M9 periksa gateway yang belum ada → 404", missing.status === 404, missing.body);
+  await new Promise((resolve) => server.close(resolve));
+  store.remove("claude");
+  fake.stop(true);
+}
+
+// ---------- apiKeyHelper gagal tanpa membocorkan isi berkas ----------
+
+{
+  const { GATEWAY_KEY_SCRIPT } = await import("../server/accounts/gateway.ts");
+  const runKey = (file: string) => spawnSync(process.execPath, [GATEWAY_KEY_SCRIPT, file], { encoding: "utf8" });
+  const missing = runKey(join(sandbox, "tidak-ada.json"));
+  check("N1 helper: berkas hilang → kode 1, tanpa token", missing.status === 1 && missing.stdout === "", missing.stderr);
+  const broken = join(sandbox, "rusak.json");
+  writeFileSync(broken, "{rahasia-yang-tidak-boleh-dikutip", { mode: 0o600 });
+  const bad = runKey(broken);
+  check("N2 helper: JSON rusak → kode 1, isi berkas tidak dikutip", bad.status === 1 && bad.stdout === "" && !bad.stderr.includes("rahasia"), bad.stderr);
+  const empty = join(sandbox, "kosong.json");
+  writeFileSync(empty, JSON.stringify({ baseUrl: "http://x", token: "" }), { mode: 0o600 });
+  check("N3 helper: token kosong → kode 1", runKey(empty).status === 1);
+}
+
+// ---------- setiap sesi Claude memasang env dan apiKeyHelper berpasangan ----------
+
+{
+  // Base URL gateway tanpa apiKeyHelper = CLI mengirim token login claude.ai ke gateway.
+  const root = new URL("../server/", import.meta.url).pathname;
+  const files = (readdirSync(root, { recursive: true }) as string[]).filter((file) => file.endsWith(".ts"));
+  const unpaired = files.filter((file) => {
+    const text = readFileSync(join(root, file), "utf8");
+    return /\bclaudeEnv\(\)/.test(text) && !/\bclaudeSettings\(\)/.test(text) && !file.startsWith(`accounts${sep}`);
+  });
+  check("O1 setiap pemakai claudeEnv() juga memasang claudeSettings()", unpaired.length === 0, unpaired);
 }
 
 offChanges();

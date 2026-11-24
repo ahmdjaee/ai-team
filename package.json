@@ -30,6 +30,7 @@
     "check:chat-tasks": "bun scripts/check-chat-tasks.ts",
     "check:acp": "bun scripts/check-acp.ts",
     "check:accounts": "bun scripts/check-accounts.ts",
+    "check:usage": "bun scripts/check-usage.ts",
     "check:mcp-http": "bun scripts/check-mcp-http.ts",
     "fix:costs": "bun scripts/fix-costs.ts",
     "gate:suggest": "bun scripts/gates/suggest-collapse.ts",

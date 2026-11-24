@@ -7,8 +7,8 @@ import { connectAcpProcess, type AcpProcess } from "ai-agent-auth/gemini";
 import { CONFIG } from "../../config.ts";
 
 /** Folder config agy di dalam `--gemini-dir`: hooks.json dan config.json milik AI Team. */
-export function agyConfigDir(): string {
-  return join(CONFIG.antigravity.dir, "config");
+export function agyConfigDir(geminiDir: string = CONFIG.antigravity.dir): string {
+  return join(geminiDir, "config");
 }
 
 const HOOK_CLIENT = join(dirname(fileURLToPath(import.meta.url)), "hook-client.ts");
@@ -29,9 +29,10 @@ function readJson(path: string): Record<string, unknown> {
 /**
  * Tulis ulang hooks.json setiap kali agy dijalankan — juga memulihkan isinya kalau pernah diubah.
  * Hook yang sama berlaku untuk semua sesi; runner dikenali dari token di env proses agy.
+ * `geminiDir` = folder data agy (`--gemini-dir`, atau `$HOME/.gemini` untuk `agy -p`).
  */
-export function ensureAgyConfig(): void {
-  const dir = agyConfigDir();
+export function ensureAgyConfig(geminiDir: string = CONFIG.antigravity.dir): void {
+  const dir = agyConfigDir(geminiDir);
   mkdirSync(dir, { recursive: true });
   const hooks = {
     "ai-team-guard": {

@@ -5,6 +5,7 @@ import { ANTIGRAVITY_CODE_DIR, PERSONAL_GEMINI_DIR } from "../server/protected.t
 import { findingHeads, reportRounds, verdictOf } from "../server/recap.ts";
 import { ARTIFACT_TOOLS, DENY_ALWAYS, ROLES, permissionsFor, resolvePermissionMode } from "../server/roles.ts";
 import { titleOptions } from "../server/agent/titler.ts";
+import { usageQueryOptions } from "../server/accounts/usage.ts";
 import { findingStatusTools } from "../server/team/mcp.ts";
 import type { RoleId } from "../server/types.ts";
 
@@ -39,6 +40,13 @@ expect(
   ["Artifact", "ArtifactComments", "ArtifactData"].every((tool) => DENY_ALWAYS.includes(tool)),
   true,
 );
+// Rule path dengan glob di bawah /proc mengembang ke setiap proses (/proc/<pid>/…, /proc/<pid>/task/<tid>/…)
+// saat sandbox Bash menyala: puluhan ribu argumen bwrap, batasnya 9000, dan semua Bash bot gagal.
+expect(
+  "DENY_ALWAYS tanpa rule glob di bawah /proc",
+  DENY_ALWAYS.filter((rule) => /\(\/\/proc\/.*[*?]/.test(rule)),
+  [],
+);
 for (const role of ["qa", "engineer", "devops", "uiux"] as RoleId[]) {
   const deny = ROLES[role].permissions.deny;
   const guarded =
@@ -61,6 +69,11 @@ expect("judul otomatis: Artifact disembunyikan", ARTIFACT_TOOLS.every((tool) => 
 expect("judul otomatis: DENY_ALWAYS dipasang", DENY_ALWAYS.every((tool) => titleDeny.includes(tool)), true);
 expect("judul otomatis: tanpa tool", titleSession.tools, []);
 expect("judul otomatis: tanpa transcript", titleSession.persistSession, false);
+
+const usageSession = usageQueryOptions(new AbortController());
+const usageDeny = (usageSession.settings as { permissions?: { deny?: string[] } } | undefined)?.permissions?.deny ?? [];
+expect("pembaca /usage: Artifact disembunyikan", ARTIFACT_TOOLS.every((tool) => usageSession.disallowedTools?.includes(tool)), true);
+expect("pembaca /usage: Artifact & konektor ditolak", DENY_ALWAYS.every((rule) => usageDeny.includes(rule)), true);
 
 expect("mode ask memakai acceptEdits untuk report.md", resolvePermissionMode(uiux, "ask"), "acceptEdits");
 expect("mode readonly memakai plan", resolvePermissionMode(uiux, "readonly"), "plan");

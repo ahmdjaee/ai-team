@@ -97,9 +97,11 @@ export const CONFIG = {
 } as const;
 
 /**
- * Environment dasar untuk subprocess agen. API key sengaja dihapus: app hanya memakai akun yang
- * login di dalam app. Proses Claude memakai `claudeEnv()` (`server/accounts/env.ts`), yang
- * menambahkan `CLAUDE_CONFIG_DIR` milik app.
+ * Environment dasar untuk subprocess agen. API key dari shell sengaja dihapus: app hanya memakai akun
+ * yang ditambahkan di dalam app. Proses Claude memakai `claudeEnv()` (`server/accounts/index.ts`), yang
+ * menambahkan `CLAUDE_CONFIG_DIR` milik app. Kalau gateway Claude aktif, base URL-nya juga ditambahkan,
+ * sedangkan tokennya dibaca CLI lewat `apiKeyHelper` (`claudeSettings()`, `server/accounts/gateway.ts`),
+ * tidak pernah lewat env.
  */
 export function agentEnv(): Record<string, string | undefined> {
   return {

@@ -56,6 +56,10 @@ const DENY: Rule[] = [
   { test: /\bCLAUDE_CONFIG_DIR\b/, reason: "menyentuh folder login Claude milik app" },
   { test: /\.credentials\.json\b/, reason: "menyentuh berkas kredensial Claude" },
   { test: /\bclaude\s+(?:auth|setup-token)\b/, reason: "mengubah atau membaca login Claude" },
+  // Token gateway Claude milik app tidak pernah ada di env proses (dibaca CLI lewat apiKeyHelper); aturan
+  // ini lapis kedua. Sengaja regex teks perintah, bukan rule `Read(//proc/**/environ)`: glob itu mengembang
+  // ke ribuan path dan menjebol batas argumen bwrap kalau sandbox Bash menyala.
+  { test: /\bANTHROPIC_AUTH_TOKEN\b|\/proc\/[^\s\/]+\/environ\b/, reason: "membaca token gateway Claude milik app" },
   { test: /\bagy\b[^;&|\n]*\s--?(?:login|logout)\b/, reason: "mengubah login Antigravity" },
   { test: /\b(?:secret-tool|gnome-keyring-daemon|gdbus|dbus-send|busctl|qdbus)\b/, reason: "menyentuh keyring atau D-Bus" },
 ];

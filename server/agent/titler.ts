@@ -5,7 +5,7 @@
  */
 import { tmpdir } from "node:os";
 import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
-import { claudeEnv, pickEngine } from "../accounts/index.ts";
+import { claudeEnv, claudeSettings, pickEngine } from "../accounts/index.ts";
 import { CONFIG } from "../config.ts";
 import { workspaceForTask } from "../context.ts";
 import { AgyChat, type ChatOptions } from "../engines/antigravity/chat.ts";
@@ -63,7 +63,7 @@ export function titleOptions(abort: AbortController): Options {
     effort: "low",
     cwd: tmpdir(),
     settingSources: [],
-    settings: { permissions: { allow: [], ask: [], deny: [...TOOLS_DENIED, ...DENY_ALWAYS] } },
+    settings: { ...claudeSettings(), permissions: { allow: [], ask: [], deny: [...TOOLS_DENIED, ...DENY_ALWAYS] } },
     tools: [],
     allowedTools: [],
     disallowedTools: [...TOOLS_DENIED, ...ARTIFACT_TOOLS],

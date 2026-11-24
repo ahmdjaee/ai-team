@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { accountViews, checkAccount, engineUsable } from "../accounts/index.ts";
+import { accountViews, checkAccount, effectiveAccount, engineUsable } from "../accounts/index.ts";
 import { scheduler } from "../agent/scheduler.ts";
 import { PROVIDER_IDS, type EngineId } from "../types.ts";
 import { AcpTaskRunner } from "./antigravity/runner.ts";
@@ -25,7 +25,8 @@ export const enginesRouter = Router();
 enginesRouter.get("/engines", async (req, res) => {
   if (req.query.refresh === "1") await Promise.all(PROVIDER_IDS.map((provider) => checkAccount(provider, true)));
   res.json({
-    engines: accountViews().map((account) => {
+    // Claude dengan gateway aktif: model dan waktu periksa milik gateway.
+    engines: accountViews().map(effectiveAccount).map((account) => {
       const usable = engineUsable(account.engine);
       return {
         id: account.engine,

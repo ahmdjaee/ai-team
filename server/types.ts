@@ -1,4 +1,4 @@
-import type { AccountView as BaseAccountView } from "ai-agent-auth/types";
+import type { AccountView as BaseAccountView, ModelOption as BaseModelOption } from "ai-agent-auth/types";
 
 export type RoleId = "qa" | "engineer" | "devops" | "uiux";
 
@@ -36,8 +36,29 @@ export function isEffort(value: unknown): value is Effort {
 /** Akun AI milik app (ai-agent-auth): pilihan model, status akun, dan status login. */
 export type { AccountState, LoginPhase, LoginView, ModelOption } from "ai-agent-auth/types";
 
-/** View akun dari library + mesin agen yang memakai akun ini. */
-export type AccountView = BaseAccountView<ProviderId> & { engine: EngineId };
+/** Akun yang menjalankan mesin Claude: login claude.ai milik app, atau gateway (base URL + token). */
+export type ClaudeSource = "oauth" | "gateway";
+
+/**
+ * Gateway Claude yang kompatibel dengan API Anthropic (seperti alias `claude-gw` di terminal). Tokennya
+ * tidak pernah dikirim ke web; `tokenHint` hanya beberapa karakter terakhir.
+ */
+export type GatewayView = {
+  state: "ok" | "expired" | "error";
+  baseUrl: string;
+  host: string;
+  tokenHint: string;
+  models: BaseModelOption[];
+  addedAt: string;
+  checkedAt?: string;
+  reason?: string;
+};
+
+/**
+ * View akun dari library + mesin agen yang memakai akun ini. Akun `claude` juga membawa gateway-nya
+ * (kalau ada) dan akun mana yang sedang dipakai bot.
+ */
+export type AccountView = BaseAccountView<ProviderId> & { engine: EngineId; gateway?: GatewayView; claudeSource?: ClaudeSource };
 
 /** Hal yang pantas menarik perhatian pemilik produk, lintas tugas. */
 export type AttentionEvent = {

@@ -11,7 +11,7 @@ import { BrowserSession, closeBrowserFor, createBrowserServer } from "../browser
 import { control } from "../browser/control.ts";
 import { isClaudeAuthError } from "ai-agent-auth/claude";
 import { claudeSessionExists } from "../accounts/claude.ts";
-import { claudeEnv, markAccountExpired } from "../accounts/index.ts";
+import { claudeEnv, claudeSettings, markAccountExpired } from "../accounts/index.ts";
 import { CONFIG } from "../config.ts";
 import { effortFor, modelFor } from "../settings.ts";
 import { contextBlock, workspaceForTask } from "../context.ts";
@@ -362,6 +362,7 @@ export class TaskRunner implements AgentRunner {
       additionalDirectories: [CONFIG.tasksDir],
       settingSources: CONFIG.includeUserSettings ? ["user", "project"] : ["project"],
       settings: {
+        ...claudeSettings(),
         permissions: permissionsFor(this.role, workspaceDir),
         attribution: { commit: "", pr: "", sessionUrl: false },
       },

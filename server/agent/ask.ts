@@ -5,7 +5,7 @@ import {
   type Query,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { PROVIDER_LABEL, accountView, claudeEnv, engineUsable, pickEngine, providerOf } from "../accounts/index.ts";
+import { PROVIDER_LABEL, claudeEnv, claudeSettings, engineAccount, engineUsable, pickEngine, providerOf } from "../accounts/index.ts";
 import { CONFIG } from "../config.ts";
 import { AgyChat, type ChatOptions } from "../engines/antigravity/chat.ts";
 import { effortFor, getSettings, modelFor, validModelId } from "../settings.ts";
@@ -81,7 +81,7 @@ export function resolveAskChoice(input: { engine?: unknown; model?: unknown }):
   const requested = typeof input.model === "string" ? input.model.trim() : "";
   if (!requested) return { ok: true, choice: { engine, model: defaults.models[engine] } };
   if (!validModelId(requested)) return { ok: false, status: 400, error: "id model tidak sah" };
-  const known = accountView(providerOf(engine)).models;
+  const known = engineAccount(providerOf(engine)).models;
   if (known.length > 0 && !known.some((item) => item.id === requested) && requested !== defaults.models[engine]) {
     return { ok: false, status: 400, error: `model ${requested} tidak ada di akun ${PROVIDER_LABEL[providerOf(engine)]}` };
   }
@@ -103,6 +103,7 @@ export function askOptions(taskId: string, model: string, history: AskMessage[])
     additionalDirectories: [taskDir(taskId)],
     settingSources: [],
     settings: {
+      ...claudeSettings(),
       permissions: {
         allow: READ_TOOLS,
         ask: [],
