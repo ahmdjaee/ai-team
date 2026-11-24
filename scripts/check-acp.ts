@@ -30,6 +30,7 @@ const { bus } = await import("../server/agent/bus.ts");
 const { AcpTaskRunner } = await import("../server/engines/antigravity/runner.ts");
 const { startHook, waitHook } = await import("../server/engines/antigravity/hooks.ts");
 const { decideTool } = await import("../server/engines/antigravity/permissions.ts");
+const { uiTool } = await import("../server/engines/antigravity/tools.ts");
 const { CONFIG } = await import("../server/config.ts");
 import type { TurnOutcome } from "../server/agent/runner.ts";
 import type { ChatOptions } from "../server/engines/antigravity/chat.ts";
@@ -499,6 +500,29 @@ const workspace = CONFIG.workspaceDir;
   check("C18 `cd workspace && rm -rf` tetap ditolak aturan role", shell(`cd ${workspace} && rm -rf node_modules`) === "deny");
   check("C19 redirect tidak lolos allow-list", shell("cat a.txt > b.txt") === "ask");
   check("C20 Hanya baca: `find -delete` ditolak", shell("find . -name x -delete", "readonly") === "deny");
+
+  // `update_steps` = checklist kemajuan agy (padanan TodoWrite), tidak perlu kartu persetujuan.
+  const steps = [{ status: "in_progress", title: "Checkout branch" }, { status: "pending", title: "Tambah uji" }];
+  const builtin = (name: string, mode: AutonomyMode) =>
+    decideTool({
+      role: "engineer",
+      mode,
+      name,
+      args: { steps },
+      workspaceDir: workspace,
+      taskDir: join(CONFIG.tasksDir, "T-x"),
+      commandVerdict: () => ({ decision: "pass", message: "" }),
+    }).decision;
+  check("C21 update_steps langsung jalan di mode Minta approval", builtin("update_steps", "ask") === "allow");
+  check("C21b update_steps langsung jalan di mode Hanya baca", builtin("update_steps", "readonly") === "allow");
+  const todo = uiTool("update_steps", { steps, toolSummary: "x" });
+  check(
+    "C21c update_steps tampil sebagai TodoWrite",
+    todo.name === "TodoWrite" &&
+      JSON.stringify(todo.input) === JSON.stringify({ todos: [{ content: "Checkout branch", status: "in_progress" }, { content: "Tambah uji", status: "pending" }] }),
+    todo,
+  );
+  check("C21d tool agy lain yang belum dikenal tetap kartu", builtin("tool_baru_agy", "ask") === "ask");
 }
 
 // ---------- D. pertanyaan, Stop, antrean ----------

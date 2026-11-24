@@ -175,6 +175,8 @@ export function decideTool(input: DecideInput): Verdict {
     case "ours":
     case "question":
     case "background":
+    case "progress":
+      // `progress` setara TodoWrite di allow-list semua role jalur Claude; boleh juga di Hanya baca.
       return { decision: "allow" };
     case "web":
       // Setara WebSearch di jalur Claude: bukan bagian allow-list role, jadi ditanyakan kecuali Auto.

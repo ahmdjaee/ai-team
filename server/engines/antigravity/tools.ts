@@ -1,8 +1,9 @@
 import type { AskQuestion } from "../../types.ts";
 
 /**
- * Tool bawaan `agy` 1.5 (nama dan argumen dicatat dari spike 19 Nov 2026). Tool yang tidak ada di
- * sini dianggap tidak dikenal dan selalu lewat kartu persetujuan.
+ * Tool bawaan `agy` 1.5 (nama dan argumen dicatat dari spike 19 Nov 2026, `update_steps` dari T-088
+ * 24 Nov 2026). Tool yang tidak ada di sini dianggap tidak dikenal: kartu persetujuan, atau ditolak di
+ * mode Hanya baca.
  */
 export type ToolClass =
   | { kind: "read"; path: string }
@@ -13,6 +14,8 @@ export type ToolClass =
   | { kind: "question" }
   | { kind: "web" }
   | { kind: "background" }
+  /** Checklist kemajuan agen sendiri (padanan TodoWrite): tidak menyentuh berkas atau perintah. */
+  | { kind: "progress" }
   | { kind: "blocked"; reason: string }
   | { kind: "unknown" };
 
@@ -61,6 +64,8 @@ export function classifyTool(name: string, args: Record<string, unknown>): ToolC
     case "manage_task":
       // Mengelola perintah latar milik sesi ini sendiri (baca output, kirim input, hentikan).
       return { kind: "background" };
+    case "update_steps":
+      return { kind: "progress" };
   }
   const blocked = BLOCKED[name];
   if (blocked) return { kind: "blocked", reason: blocked };
@@ -121,10 +126,23 @@ export function uiTool(name: string, args: Record<string, unknown>): { name: str
       return { name: "WebSearch", input: cleanArgs(args) };
     case "ask_question":
       return { name: "AskUserQuestion", input: { questions: toAskQuestions(args.questions) } };
+    case "update_steps":
+      return { name: "TodoWrite", input: { todos: toTodos(args.steps) } };
   }
   const mcp = splitMcpName(name);
   if (mcp) return { name: `mcp__${mcp.server}__${mcp.tool}`, input: cleanArgs(args) };
   return { name, input: cleanArgs(args) };
+}
+
+/** `update_steps` agy: `[{title, status}]` → `todos` ala TodoWrite (`content`, `status`). */
+function toTodos(raw: unknown): Array<{ content: string; status: string }> {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    const content = str(record.title) || str(record.Title);
+    return content ? [{ content, status: str(record.status) || str(record.Status) || "pending" }] : [];
+  });
 }
 
 /** `ask_question` agy: `[{question, options: string[] | {label}[]}]` → format kartu pertanyaan. */
