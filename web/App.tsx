@@ -17,6 +17,7 @@ import { TaskList } from "./components/TaskList.tsx";
 import { maybeNotify, setTitleBadge, startAttentionStream } from "./notifications.ts";
 import { ROLE_IDS, STATUSES, keepFilters, newTaskPath, taskPath, type AppContext } from "./routes.tsx";
 import { THEME_LABEL, applyTheme, nextTheme, readTheme, type Theme } from "./theme.ts";
+import { watchForUpdate } from "./version.ts";
 
 const SIDEBAR_KEY = "ai-team-sidebar";
 
@@ -33,6 +34,9 @@ export function App() {
   const [creatingProject, setCreatingProject] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [theme, setTheme] = useState<Theme>(() => readTheme());
+  // Rilis UI baru saat halaman ini sedang dipakai (lihat version.ts).
+  const [updateReady, setUpdateReady] = useState(false);
+  useEffect(() => watchForUpdate(() => setUpdateReady(true)), []);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem(SIDEBAR_KEY) === "1";
@@ -366,6 +370,19 @@ export function App() {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {updateReady && (
+          <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-accent-soft px-4 py-2 text-sm text-accent-ink">
+            <span className="min-w-0 flex-1">
+              Versi baru AI Team sudah dirilis. Muat ulang untuk memakainya; draf Anda tetap tersimpan.
+            </span>
+            <button
+              onClick={() => window.location.reload()}
+              className="rounded-lg bg-accent px-3 py-1 text-xs font-medium text-on-accent hover:bg-accent-hover"
+            >
+              Muat ulang
+            </button>
+          </div>
+        )}
         {noAccount && location.pathname !== "/settings" && (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-tag-yellow px-4 py-2 text-sm text-tag-yellow-ink">
             <span className="min-w-0 flex-1">

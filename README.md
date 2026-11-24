@@ -133,6 +133,11 @@ inkremental. Cache cargo kontainer disimpan di `src-tauri/target/docker-home/`. 
   "Notifikasi desktop". Badge `(2) AI Team` ikut tampil di judul jendela.
 - **Tautan** ke situs lain dan tautan `target="_blank"` (lampiran, bukti, halaman login akun AI) dibuka di
   browser sistem. Unduhan masuk ke folder Unduhan.
+- **Rilis UI baru ikut sendiri.** Setelah `bun run build` + restart, setiap halaman yang terbuka (jendela desktop
+  maupun tab browser) memeriksa ulang `index.html` begitu tersambung lagi. Halaman yang tidak sedang dilihat
+  langsung dimuat ulang; halaman yang sedang dipakai menampilkan bilah "Versi baru AI Team sudah dirilis" dengan
+  tombol **Muat ulang**, dan ikut dimuat ulang begitu disembunyikan. Draf chat tetap tersimpan
+  (`web/version.ts`).
 - **Tab Live** membaca aliran yang sama lewat `fetch` (`web/lib/mjpeg.ts`, endpoint `…/live?raw=1`), bukan
   `<img>`. WebKitGTK menampilkan MJPEG di `<img>`, tetapi tidak pernah menutup sambungannya, sehingga screencast
   bot tidak akan berhenti. Pemisah frame-nya diuji `bun run check:mjpeg`.
